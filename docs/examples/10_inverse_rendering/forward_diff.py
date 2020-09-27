@@ -12,7 +12,7 @@ from mitsuba.python.autodiff import render, write_bitmap
 
 # Load the Cornell Box
 Thread.thread().file_resolver().append('cbox')
-scene = load_file('cbox/cbox.xml')
+scene = load_file('C:/MyFile/code/ray tracing/misuba2/test/gpu_autodiff/cbox/cbox.xml')
 
 # Find differentiable scene parameters
 params = traverse(scene)
@@ -22,7 +22,7 @@ param_0 = params['red.reflectance.value']
 ek.set_requires_gradient(param_0)
 
 # Differentiable simulation
-image = render(scene, spp=32)
+image = render(scene, spp=4)
 
 # Assign the gradient [1, 1, 1] to the 'red.reflectance.value' input
 ek.set_gradient(param_0, [1, 1, 1], backward=False)
@@ -35,6 +35,6 @@ image_grad = ek.gradient(image)
 
 # .. write them to a PNG file
 crop_size = scene.sensors()[0].film().crop_size()
-fname = 'out.png'
+fname = 'C:/MyFile/code/ray tracing/misuba2/test/gpu_autodiff/output/out.png'
 write_bitmap(fname, image_grad, crop_size)
 print('Wrote forward differentiation image to: {}'.format(fname))

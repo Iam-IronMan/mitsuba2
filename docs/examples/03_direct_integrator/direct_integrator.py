@@ -3,7 +3,7 @@ import enoki as ek
 import mitsuba
 
 # Set the desired mitsuba variant
-mitsuba.set_variant('gpu_rgb')
+mitsuba.set_variant('gpu_autodiff_rgb')
 
 from mitsuba.core import Float, Vector3f, Thread, xml
 from mitsuba.core.xml import load_file
@@ -74,12 +74,12 @@ class MyDirectIntegrator(SamplingIntegrator):
 register_integrator("mydirectintegrator", lambda props: MyDirectIntegrator(props))
 
 # Load an XML file which specifies "mydirectintegrator" as the scene's integrator
-filename = 'path/to/my/scene.xml'
+filename = 'C:/MyFile/code/ray tracing/misuba2/test/gpu_autodiff/cbox/cbox.xml'
 Thread.thread().file_resolver().append(os.path.dirname(filename))
 scene = load_file(filename)
 
 scene.integrator().render(scene, scene.sensors()[0])
 
 film = scene.sensors()[0].film()
-film.set_destination_file('my-direct-integrator.exr')
+film.set_destination_file('C:/MyFile/code/ray tracing/misuba2/test/gpu_autodiff/output/my-direct-integrator.exr')
 film.develop()
