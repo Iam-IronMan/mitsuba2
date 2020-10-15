@@ -71,5 +71,8 @@ MTS_PY_EXPORT(Sensor) {
     MTS_PY_CLASS(ProjectiveCamera, Sensor)
         .def_method(ProjectiveCamera, near_clip)
         .def_method(ProjectiveCamera, far_clip)
-        .def_method(ProjectiveCamera, focus_distance);
+        .def_method(ProjectiveCamera, focus_distance)
+        .def_method(ProjectiveCamera, focus_distance_y)
+        .def_method(ProjectiveCamera, cx)
+        .def_method(ProjectiveCamera, cy);
 }

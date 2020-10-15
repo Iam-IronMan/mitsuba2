@@ -166,10 +166,19 @@ public:
     /// Return the distance to the focal plane
     ScalarFloat focus_distance() const { return m_focus_distance; }
 
+    ScalarFloat focus_distance_y() const { return m_focus_distance_y; }
+
+    ScalarFloat cx() const { return m_cx; }
+
+    ScalarFloat cy() const { return m_cy; }
+
     void traverse(TraversalCallback *callback) override {
         callback->put_parameter("near_clip", m_near_clip);
         callback->put_parameter("far_clip", m_far_clip);
         callback->put_parameter("focus_distance", m_focus_distance);
+        callback->put_parameter("focus_distance_y", m_focus_distance_y);
+        callback->put_parameter("cx", m_cx);
+        callback->put_parameter("cy", m_cy);
         Base::traverse(callback);
     }
 
@@ -183,6 +192,9 @@ protected:
     ScalarFloat m_near_clip;
     ScalarFloat m_far_clip;
     ScalarFloat m_focus_distance;
+    ScalarFloat m_focus_distance_y;
+    ScalarFloat m_cx;
+    ScalarFloat m_cy;
 };
 
 // ========================================================================
@@ -226,10 +238,52 @@ perspective_projection(const Vector<int, 2> &film_size,
            Transform4f::translate(
                Vector3f(-rel_offset.x(), -rel_offset.y(), 0.f)) *
            Transform4f::scale(Vector3f(-0.5f, -0.5f * aspect, 1.f)) *
-           Transform4f::translate(Vector3f(-1.f, -1.f / aspect, 0.f)) *
+           Transform4f::translate(Vector3f(-1.f, -1.f/ aspect, 0.f)) *
            Transform4f::perspective(fov_x, near_clip, far_clip);
 }
 
+template <typename Float>
+Transform<Point<Float, 4>>
+perspective_projection(const Vector<int, 2> &film_size,
+                       const Vector<int, 2> &crop_size,
+                       const Vector<int, 2> &crop_offset, Float fov_x, Float cx,
+                       Float cy, Float focus_distance_x, Float focus_distance_y,
+                       Float near_clip, Float far_clip) {
+
+    using Vector2f    = Vector<Float, 2>;
+    using Vector3f    = Vector<Float, 3>;
+    using Transform4f = Transform<Point<Float, 4>>;
+
+    Vector2f film_size_f = Vector2f(film_size),
+             rel_size    = Vector2f(crop_size) / film_size_f,
+             rel_offset  = Vector2f(crop_offset) / film_size_f;
+
+    Float aspect = film_size_f.x() / film_size_f.y();
+
+    /**
+     * These do the following (in reverse order):
+     *
+     * 1. Create transform from camera space to [-1,1]x[-1,1]x[0,1] clip
+     *    coordinates (not taking account of the aspect ratio yet)
+     *
+     * 2+3. Translate and scale to shift the clip coordinates into the
+     *    range from zero to one, and take the aspect ratio into account.
+     *
+     * 4+5. Translate and scale the coordinates once more to account
+     *     for a cropping window (if there is any)
+     */
+    return Transform4f::scale(
+               Vector3f(1.f / rel_size.x(), 1.f / rel_size.y(), 1.f)) *
+           Transform4f::translate(
+               Vector3f(-rel_offset.x(), -rel_offset.y(), 0.f)) *
+           Transform4f::scale(Vector3f(-0.5f, -0.5f * aspect, 1.f)) *
+           Transform4f::translate(
+               Vector3f(-1.f * 1.f/cx,
+                        -1.f * 1.f/cy / aspect, 0.f)) *
+           Transform4f::scale(
+               Vector3f(1, focus_distance_y / focus_distance_x, 1.f)) *
+           Transform4f::perspective(fov_x, near_clip, far_clip);
+}
 //! @}
 // ========================================================================
 

@@ -2,11 +2,16 @@
 # then replace one of the scene parameters and try to recover it using
 # differentiable rendering and gradient-based optimization. (PyTorch)
 
+import os
+os.environ['PATH'] = 'C:/MyFile/code/ray tracing/misuba2/mitsuba2/build/dist/;' + os.environ['PATH']
+import sys
+sys.path.append("C:/MyFile/code/ray tracing/misuba2/mitsuba2/build/dist/python/")
+
 import enoki as ek
 import mitsuba
 mitsuba.set_variant('gpu_autodiff_rgb')
 
-from mitsuba.core import Thread, Vector3f
+from mitsuba.core import Thread, Vector3f, Float
 from mitsuba.core.xml import load_file
 from mitsuba.python.util import traverse
 from mitsuba.python.autodiff import render_torch, write_bitmap
@@ -14,7 +19,7 @@ import torch
 import time
 
 Thread.thread().file_resolver().append('cbox')
-scene = load_file('cbox/cbox.xml')
+scene = load_file('C:/MyFile/code/ray tracing/misuba2/test/gpu_autodiff/cbox/cbox.xml')
 
 # Find differentiable scene parameters
 params = traverse(scene)
@@ -37,6 +42,7 @@ params.update()
 
 # Which parameters should be exposed to the PyTorch optimizer?
 params_torch = params.torch()
+print("params_torch: ", params_torch)
 
 # Construct a PyTorch Adam optimizer that will adjust 'params_torch'
 opt = torch.optim.Adam(params_torch.values(), lr=.2)
@@ -60,7 +66,10 @@ for it in range(iterations):
 
     # Back-propagate errors to input parameters
     ob_val.backward()
-
+    print("grad: ", params_torch['red.reflectance.value'].grad)
+    grad = params_torch['red.reflectance.value'].grad
+    grad_ek = Vector3f(grad)
+    print("ek grad: ", grad_ek, type(grad_ek))
     # Optimizer: take a gradient step
     opt.step()
 

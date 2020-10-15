@@ -95,9 +95,14 @@ public:
         m_irradiance = props.texture<Texture>("irradiance");
         ScalarVector2i size = m_irradiance->resolution();
         m_x_fov = parse_fov(props, size.x() / (float) size.y());
+        /* Distance to the focal plane */
+        ScalarFloat focus_distance = props.float_("focus_distance", 1e4f);
+        ScalarFloat focus_distance_y = props.float_("focus_distance_y", 1e4f);
+        ScalarFloat cx               = props.float_("cx", 1.f);
+        ScalarFloat cy               = props.float_("cy", 1.f);
 
         m_camera_to_sample = perspective_projection<ScalarFloat>(
-            size, size, 0, m_x_fov, 1e-4f, 1e4f);
+            size, size, 0, m_x_fov, cx, cy, focus_distance, focus_distance_y, 1e-4f, 1e4f);
 
         m_sample_to_camera = m_camera_to_sample.inverse();
 

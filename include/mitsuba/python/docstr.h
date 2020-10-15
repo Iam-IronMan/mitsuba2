@@ -4371,6 +4371,12 @@ static const char *__doc_mitsuba_ProjectiveCamera_far_clip = R"doc(Return the fa
 
 static const char *__doc_mitsuba_ProjectiveCamera_focus_distance = R"doc(Return the distance to the focal plane)doc";
 
+static const char *__doc_mitsuba_ProjectiveCamera_focus_distance_y =R"doc(Return the distance to the focal plane y)doc";
+
+static const char *__doc_mitsuba_ProjectiveCamera_cx = R"doc()doc";
+
+static const char *__doc_mitsuba_ProjectiveCamera_cy = R"doc()doc";
+
 static const char *__doc_mitsuba_ProjectiveCamera_m_far_clip = R"doc()doc";
 
 static const char *__doc_mitsuba_ProjectiveCamera_m_focus_distance = R"doc()doc";
