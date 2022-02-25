@@ -264,12 +264,15 @@ perspective_projection(const Vector<int, 2> &film_size,
      * These do the following (in reverse order):
      *
      * 1. Create transform from camera space to [-1,1]x[-1,1]x[0,1] clip
-     *    coordinates (not taking account of the aspect ratio yet)
+     *    coordinates (not taking account of the aspect ratio yet) perspective()
      *
-     * 2+3. Translate and scale to shift the clip coordinates into the
-     *    range from zero to one, and take the aspect ratio into account.
+     * 2. Scale the ratio of height, because of the difference between fx and fy.
      *
-     * 4+5. Translate and scale the coordinates once more to account
+     * 3. Translate the offset of principal point.
+     *
+     * 4. Transform image space from [0, 2] to [0, 1]
+     *
+     * 5+6. Translate and scale the coordinates once more to account
      *     for a cropping window (if there is any)
      */
     return Transform4f::scale(
@@ -278,8 +281,8 @@ perspective_projection(const Vector<int, 2> &film_size,
                Vector3f(-rel_offset.x(), -rel_offset.y(), 0.f)) *
            Transform4f::scale(Vector3f(-0.5f, -0.5f * aspect, 1.f)) *
            Transform4f::translate(
-               Vector3f(-1.f * 1.f/cx,
-                        -1.f * 1.f/cy / aspect, 0.f)) *
+               Vector3f(-1.f * (2.f-cx),
+                        -1.f * (2.f-cy) / aspect, 0.f)) *
            Transform4f::scale(
                Vector3f(1, focus_distance_y / focus_distance_x, 1.f)) *
            Transform4f::perspective(fov_x, near_clip, far_clip);
