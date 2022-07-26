@@ -116,6 +116,16 @@ MTS_PY_EXPORT(BSDF) {
                 return ptr->flags(active); }),
             "ptr"_a, "active"_a = true,
             D(BSDF, flags));
+        
+        bsdf.def_static(
+            "acc_irradiance_vec",
+            vectorize([](const BSDFPtr &ptr, const float factor) { ptr->acc_irradiance(factor); }),
+            "ptr"_a, "factor"_a);
+
+        bsdf.def_static(
+            "save_irradiance_vec",
+            vectorize([](const BSDFPtr &ptr) { ptr->save_irradiance(); }),
+            "ptr"_a);
     }
 
     MTS_PY_REGISTER_OBJECT("register_bsdf", BSDF)
