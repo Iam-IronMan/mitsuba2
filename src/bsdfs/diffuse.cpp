@@ -252,7 +252,7 @@ public:
             return 0.f;
         
         if (m_irradiance != nullptr) {
-            UnpolarizedSpectrum value = m_irradiance->eval(si, active);
+            UnpolarizedSpectrum value = m_irradiance->eval(si, active) * m_reflectance->eval(si, active);
             //return select(active, unpolarized<Spectrum>(value), 0.f);
             return value;
         }
