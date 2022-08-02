@@ -13,6 +13,18 @@ MTS_VARIANT Spectrum BSDF<Float, Spectrum>::eval_null_transmission(
     return 0.f;
 }
 
+MTS_VARIANT void BSDF<Float, Spectrum>::catch_irradiance(const BSDFContext &ctx,
+                                        const SurfaceInteraction3f &si,
+                                        const Vector3f &wo,
+                                        const Spectrum &emitter_val,
+                                        Mask active) const {
+    //std::cout << "aha! catch_irradiance\n";
+}
+
+MTS_VARIANT void BSDF<Float, Spectrum>::acc_irradiance(const float factor) const {}
+
+MTS_VARIANT void BSDF<Float, Spectrum>::save_irradiance() const {}
+
 MTS_VARIANT std::string BSDF<Float, Spectrum>::id() const { return m_id; }
 
 template <typename Index>

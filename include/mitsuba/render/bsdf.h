@@ -7,7 +7,7 @@
 */
 
 #pragma once
-
+#include <mitsuba/core/bitmap.h>
 #include <mitsuba/core/profiler.h>
 #include <mitsuba/render/interaction.h>
 
@@ -408,6 +408,15 @@ public:
     virtual Spectrum eval_null_transmission(const SurfaceInteraction3f &si,
                              Mask active = true) const;
 
+    virtual void catch_irradiance(const BSDFContext &ctx,
+                                  const SurfaceInteraction3f &si,
+                                  const Vector3f &wo,
+                                  const Spectrum &emitter_val,
+                                  Mask active = true) const;
+
+    virtual void acc_irradiance(const float factor) const;
+
+    virtual void save_irradiance() const;
 
     // -----------------------------------------------------------------------
     //! @{ \name BSDF property accessors (components, flags, etc)
@@ -524,6 +533,9 @@ ENOKI_CALL_SUPPORT_TEMPLATE_BEGIN(mitsuba::BSDF)
     ENOKI_CALL_SUPPORT_METHOD(eval)
     ENOKI_CALL_SUPPORT_METHOD(eval_null_transmission)
     ENOKI_CALL_SUPPORT_METHOD(pdf)
+    ENOKI_CALL_SUPPORT_METHOD(catch_irradiance)
+    ENOKI_CALL_SUPPORT_METHOD(acc_irradiance)
+    ENOKI_CALL_SUPPORT_METHOD(save_irradiance)
     ENOKI_CALL_SUPPORT_GETTER(flags, m_flags)
 
     auto needs_differentials() const {

@@ -12,7 +12,6 @@ ImageBlock<Float, Spectrum>::ImageBlock(const ScalarVector2i &size, size_t chann
       m_weights_x(nullptr), m_weights_y(nullptr), m_warn_negative(warn_negative),
       m_warn_invalid(warn_invalid), m_normalize(normalize) {
     m_border_size = (uint32_t)((filter != nullptr && border) ? filter->border_size() : 0);
-
     if (filter) {
         // Temporary buffers used in put()
         int filter_size = (int) std::ceil(2 * filter->radius()) + 1;
@@ -114,7 +113,7 @@ ImageBlock<Float, Spectrum>::put(const Point2f &pos_, const Float *value, Mask a
     // Convert to pixel coordinates within the image block
     Point2f pos = pos_ - (m_offset - m_border_size + .5f);
 
-    if (filter_radius > 0.5f + math::RayEpsilon<Float>) {
+    if (filter_radius > 0.5f + math::RayEpsilon<Float>) {   
         // Determine the affected range of pixels
         Point2u lo = Point2u(max(ceil2int <Point2i>(pos - filter_radius), 0)),
                 hi = Point2u(min(floor2int<Point2i>(pos + filter_radius), size - 1));
@@ -157,6 +156,7 @@ ImageBlock<Float, Spectrum>::put(const Point2f &pos_, const Float *value, Mask a
                 enabled &= x <= hi.x();
                 ENOKI_NOUNROLL for (uint32_t k = 0; k < m_channel_count; ++k)
                     scatter_add(m_data, value[k] * weight, offset + k, enabled);
+                    //scatter(m_data, value[k], offset + k, enabled);
             }
         }
     } else {
@@ -166,6 +166,7 @@ ImageBlock<Float, Spectrum>::put(const Point2f &pos_, const Float *value, Mask a
         Mask enabled = active && all(lo >= 0u && lo < size);
         ENOKI_NOUNROLL for (uint32_t k = 0; k < m_channel_count; ++k)
             scatter_add(m_data, value[k], offset + k, enabled);
+            //scatter(m_data, value[k], offset + k, enabled); 
     }
 
     return active;
