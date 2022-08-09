@@ -185,6 +185,11 @@ public:
         if (props.has_property("specular_reflectance"))
             m_specular_reflectance = props.texture<Texture>("specular_reflectance", 1.f);
 
+        m_fresnel_shlick = props.bool_("fresnel_shlick", false);
+        if (props.has_property("r0")) {
+            m_r0 = props.texture<Texture>("r0", 0.f);
+        }
+
         m_flags = BSDFFlags::GlossyReflection | BSDFFlags::FrontSide;
         if (m_alpha_u != m_alpha_v)
             m_flags = m_flags | BSDFFlags::Anisotropic;
@@ -270,13 +275,17 @@ public:
                                               -wi_hat, p_axis_in, mueller::stokes_basis(-wi_hat),
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
-            F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, m)), eta_c);
+            if (likely(m_fresnel_shlick)) {
+                UnpolarizedSpectrum r0 = m_r0->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), r0);
+            } else {
+                F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, m)), eta_c);
+            }
         }
 
         /* If requested, include the specular reflectance component */
         if (m_specular_reflectance)
             weight *= m_specular_reflectance->eval(si, active);
-
         return { bs, (F * weight) & active };
     }
 
@@ -346,13 +355,17 @@ public:
                                               -wi_hat, p_axis_in, mueller::stokes_basis(-wi_hat),
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
-            F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
+            if (likely(m_fresnel_shlick)) {
+                UnpolarizedSpectrum r0 = m_r0->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), r0);
+            } else {
+                F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
+            }
         }
 
         /* If requested, include the specular reflectance component */
         if (m_specular_reflectance)
             result *= m_specular_reflectance->eval(si, active);
-
         return (F * result) & active;
     }
 
@@ -435,6 +448,11 @@ private:
     ref<Texture> m_k;
     /// Specular reflectance component
     ref<Texture> m_specular_reflectance;
+
+    // use shlick
+    bool m_fresnel_shlick = false;
+    // 'zero angle' reflentance value
+    ref<Texture> m_r0;
 };
 
 MTS_IMPLEMENT_CLASS_VARIANT(RoughConductor, BSDF)
