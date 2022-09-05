@@ -101,6 +101,8 @@ MTS_VARIANT ProjectiveCamera<Float, Spectrum>::ProjectiveCamera(const Properties
     m_cx = props.float_("cx", 1.f);
     m_cy = props.float_("cy", 1.f);
 
+    m_shearing = props.float_("shearing", 0.f);
+
     if (m_near_clip <= 0.f)
         Throw("The 'near_clip' parameter must be greater than zero!");
     if (m_near_clip >= m_far_clip)

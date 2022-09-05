@@ -73,6 +73,7 @@ MTS_PY_EXPORT(Sensor) {
         .def_method(ProjectiveCamera, far_clip)
         .def_method(ProjectiveCamera, focus_distance)
         .def_method(ProjectiveCamera, focus_distance_y)
+        .def_method(ProjectiveCamera, shearing)
         .def_method(ProjectiveCamera, cx)
         .def_method(ProjectiveCamera, cy);
 }

@@ -172,6 +172,8 @@ public:
 
     ScalarFloat cy() const { return m_cy; }
 
+    ScalarFloat shearing() const { return m_shearing; }
+
     void traverse(TraversalCallback *callback) override {
         callback->put_parameter("near_clip", m_near_clip);
         callback->put_parameter("far_clip", m_far_clip);
@@ -179,6 +181,7 @@ public:
         callback->put_parameter("focus_distance_y", m_focus_distance_y);
         callback->put_parameter("cx", m_cx);
         callback->put_parameter("cy", m_cy);
+        callback->put_parameter("shearing", m_shearing);
         Base::traverse(callback);
     }
 
@@ -195,6 +198,7 @@ protected:
     ScalarFloat m_focus_distance_y;
     ScalarFloat m_cx;
     ScalarFloat m_cy;
+    ScalarFloat m_shearing;
 };
 
 // ========================================================================
@@ -239,7 +243,7 @@ perspective_projection(const Vector<int, 2> &film_size,
                Vector3f(-rel_offset.x(), -rel_offset.y(), 0.f)) *
            Transform4f::scale(Vector3f(-0.5f, -0.5f * aspect, 1.f)) *
            Transform4f::translate(Vector3f(-1.f, -1.f/ aspect, 0.f)) *
-           Transform4f::perspective(fov_x, near_clip, far_clip);
+           Transform4f::perspective(fov_x, near_clip, far_clip, 0);
 }
 
 template <typename Float>
@@ -248,7 +252,7 @@ perspective_projection(const Vector<int, 2> &film_size,
                        const Vector<int, 2> &crop_size,
                        const Vector<int, 2> &crop_offset, Float fov_x, Float cx,
                        Float cy, Float focus_distance_x, Float focus_distance_y,
-                       Float near_clip, Float far_clip) {
+                       Float near_clip, Float far_clip, Float shearing) {
 
     using Vector2f    = Vector<Float, 2>;
     using Vector3f    = Vector<Float, 3>;
@@ -285,7 +289,7 @@ perspective_projection(const Vector<int, 2> &film_size,
                         -1.f * (2.f-cy) / aspect, 0.f)) *
            Transform4f::scale(
                Vector3f(1, focus_distance_y / focus_distance_x, 1.f)) *
-           Transform4f::perspective(fov_x, near_clip, far_clip);
+           Transform4f::perspective(fov_x, near_clip, far_clip, shearing);
 }
 //! @}
 // ========================================================================

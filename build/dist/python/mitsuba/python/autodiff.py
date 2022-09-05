@@ -90,18 +90,6 @@ def _render_helper(scene, spp=None, sensor_index=0):
 
     return values / (weight + 1e-8)
 
-def write_bitmapLDR(filename, data, resolution, a, b):
-    import numpy as np
-    import cv2
-
-    if type(data).__name__ == 'Tensor':
-        data = data.detach().cpu()
-
-    data = np.array(data.numpy())
-    data = data.reshape(resolution[1], resolution[0], -1)
-
-    cv2.imwrite(filename, data[:,:,::-1]*a+b)
-
 
 def write_bitmap(filename, data, resolution, write_async=True):
     """
@@ -116,7 +104,6 @@ def write_bitmap(filename, data, resolution, write_async=True):
 
     data = np.array(data.numpy())
     data = data.reshape(resolution[1], resolution[0], -1)
-
     bitmap = Bitmap(data)
     if filename.endswith('.png') or \
        filename.endswith('.jpg') or \
@@ -305,31 +292,6 @@ class SGD(Optimizer):
             ek.set_requires_gradient(value)
             self.params[k] = value
         self.params.update()
-    
-    def step_withG(self, g_dict):
-        """ Take a gradient step """
-        for k, p in self.params.items():
-            # g_p = ek.gradient(p)
-            g_p = g_dict[k]
-            size = ek.slices(g_p)
-            if size == 0:
-                continue
-
-            if self.momentum != 0:
-                if size != ek.slices(self.state[k]):
-                    # Reset state if data size has changed
-                    self._reset(k)
-
-                self.state[k] = self.momentum * self.state[k] + g_p
-                value = ek.detach(p) - self.lr_v * self.state[k]
-            else:
-                value = ek.detach(p) - self.lr_v * g_p
-
-            value = type(p)(value)
-            ek.set_requires_gradient(value)
-            self.params[k] = value
-        self.params.update()
-
 
     def _reset(self, key):
         """ Zero-initializes the internal state associated with a parameter """
@@ -399,37 +361,6 @@ class Adam(Optimizer):
             u = type(p)(u)
             ek.set_requires_gradient(u)
             self.params[k] = u
-        self.params.update()
-
-    def step_withG(self, g_dict):
-        """ Take a gradient step """
-        self.t += 1
-
-        from mitsuba.core import Float
-        lr_t = ek.detach(Float(self.lr * ek.sqrt(1 - self.beta_2**self.t) /
-                               (1 - self.beta_1**self.t), literal=False))
-
-        for k, p in self.params.items():
-            # g_p = ek.gradient(p)
-            g_p = g_dict[k]
-            size = ek.slices(g_p)
-
-            if size == 0:
-                continue
-            elif size != ek.slices(self.state[k][0]):
-                # Reset state if data size has changed
-                self._reset(k)
-
-            m_tp, v_tp = self.state[k]
-            m_t = self.beta_1 * m_tp + (1 - self.beta_1) * g_p
-            v_t = self.beta_2 * v_tp + (1 - self.beta_2) * ek.sqr(g_p)
-            self.state[k] = (m_t, v_t)
-
-            u = ek.detach(p) - lr_t * m_t / (ek.sqrt(v_t) + self.epsilon)
-            u = type(p)(u)
-            ek.set_requires_gradient(u)
-            self.params[k] = u
-        self.params.update()
 
     def _reset(self, key):
         """ Zero-initializes the internal state associated with a parameter """
@@ -479,7 +410,6 @@ def render_torch(scene, params=None, **kwargs):
                             malloc_trim = v
                         elif params is not None:
                             params[k] = type(params[k])(v)
-                            
                             ctx.inputs.append(None)
                             ctx.inputs.append(params[k] if v.requires_grad
                                               else None)
