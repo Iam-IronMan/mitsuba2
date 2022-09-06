@@ -6,6 +6,11 @@
 #include <mitsuba/render/microfacet.h>
 #include <mitsuba/render/texture.h>
 
+#include <mitsuba/core/bitmap.h>
+#include <mitsuba/core/fstream.h>
+#include <mitsuba/core/fresolver.h>
+#include <array>
+
 NAMESPACE_BEGIN(mitsuba)
 
 /**!
@@ -185,6 +190,60 @@ public:
         if (props.has_property("specular_reflectance"))
             m_specular_reflectance = props.texture<Texture>("specular_reflectance", 1.f);
 
+        m_fresnel_shlick = props.bool_("fresnel_shlick", false);
+        if (props.has_property("r0")) {
+            m_r0 = props.texture<Texture>("r0", 0.f);
+        }
+
+        m_ibl = props.bool_("ibl", false);
+        if (m_ibl) {
+            FileResolver *fs = Thread::thread()->file_resolver();
+            std::string name  = props.string("brdflut");            
+            fs::path file_path = fs->resolve(name);
+            ref<Bitmap> bitmap = new Bitmap(file_path);
+
+            //bitmap = bitmap->convert(Bitmap::PixelFormat::RGBA, struct_type_v<ScalarFloat>, false);
+            bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
+            m_brdflut.resolution = ScalarVector2i(bitmap->size());
+            m_brdflut.data = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_brdflut.resolution) * 3);
+
+            //{
+            //    printf("begin test\n");
+            //    // for test
+            //    DynamicBuffer<Float> data = m_brdflut.data.managed();
+            //    const ScalarFloat *fptr   = data.data();
+            //    float *cdata = new float[hprod(m_brdflut.resolution) * 3];
+            //    for (int i = 0, pixel_count = hprod(m_brdflut.resolution);
+            //         i < pixel_count; ++i) {
+            //        ScalarColor3f fvalue = load_unaligned<ScalarColor3f>(fptr);
+            //        cdata[i * 3 + 0]     = fvalue.x();
+            //        cdata[i * 3 + 1]     = fvalue.y();
+            //        cdata[i * 3 + 2]     = fvalue.z();
+            //        fptr += 3;
+            //    }
+            //    uint8_t *udata = (uint8_t *) cdata;
+            //    const Bitmap::Vector2u size((uint32_t) m_brdflut.resolution.x(),
+            //                                (uint32_t) m_brdflut.resolution.y());
+            //    ref<Bitmap> test_bitmap =
+            //        new Bitmap(Bitmap::PixelFormat::RGB, Struct::Type::Float32,
+            //                   size, 3u, udata);
+            //    test_bitmap->write(fs::path("E:/resources/0000/brdf_temp2/specular0_low/result/approx_f001/test.exr"));
+            //    printf("end test\n");
+            //}
+
+            for (int i = 0; i < 11; ++i) {
+                std::string name = (i == 10 ? "env10" : ("env0" + std::to_string(i)));
+                fs::path file_path = fs->resolve(props.string(name));
+                ref<Bitmap> bitmap = new Bitmap(file_path);
+
+                bitmap = bitmap->convert(Bitmap::PixelFormat::RGBA, struct_type_v<ScalarFloat>, false);
+                m_prefiltered_envmap.resolution_list[i] = bitmap->size();
+                m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 4);
+            }
+            m_prefiltered_envmap.scale = props.float_("envmap_scale", 1.f);
+            m_prefiltered_envmap.world_transform = props.animated_transform("to_world", ScalarTransform4f()).get();
+        }
+
         m_flags = BSDFFlags::GlossyReflection | BSDFFlags::FrontSide;
         if (m_alpha_u != m_alpha_v)
             m_flags = m_flags | BSDFFlags::Anisotropic;
@@ -270,19 +329,134 @@ public:
                                               -wi_hat, p_axis_in, mueller::stokes_basis(-wi_hat),
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
-            F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, m)), eta_c);
+            if (likely(m_fresnel_shlick)) {
+                UnpolarizedSpectrum r0 = m_r0->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), r0);
+            } else {
+                F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, m)), eta_c);
+            }
         }
 
         /* If requested, include the specular reflectance component */
         if (m_specular_reflectance)
             weight *= m_specular_reflectance->eval(si, active);
-
         return { bs, (F * weight) & active };
+    }
+
+    UnpolarizedSpectrum eval_envmap(Int32 lod, Point2f uv, const Wavelength &wavelengths,
+                         Mask active) const {
+        //auto& data = gather<DynamicBuffer<Float>>(m_prefiltered_envmap.data_list, lod, active);
+        UnpolarizedSpectrum result(0.f);
+        for (int i = 0; i < 11; ++i) {
+            auto &resolution = m_prefiltered_envmap.resolution_list[i];
+            auto &data      = m_prefiltered_envmap.data_list[i];
+            //Point2f uv_t = uv * Vector2f(resolution);
+            //Point2u pos = min(Point2u(uv_t + 0.5), resolution - 1u);
+            Point2f uv_t = uv * Vector2f(resolution - 1u);
+            Point2u pos  = min(Point2u(uv_t), resolution - 2u);
+
+
+            Point2f w1 = uv_t - Point2f(pos), w0 = 1.f - w1;
+
+            const uint32_t width = resolution.x();
+            UInt32 index         = pos.x() + pos.y() * width;
+            Mask active_e = active;
+            active_e &= eq(lod, i);
+            Vector4f v00 = gather<Vector4f>(data, index, active_e),
+                     v10 = gather<Vector4f>(data, index + 1, active_e),
+                     v01 = gather<Vector4f>(data, index + width, active_e),
+                     v11 = gather<Vector4f>(data, index + width + 1, active_e);
+
+            ENOKI_MARK_USED(wavelengths);
+            Vector4f v0 = fmadd(w0.x(), v00, w1.x() * v10),
+                     v1 = fmadd(w0.x(), v01, w1.x() * v11),
+                     v  = fmadd(w0.y(), v0, w1.y() * v1);
+
+             result += head<3>(v);
+        }
+        result *= m_prefiltered_envmap.scale;
+        return result;
+    }
+
+    template <typename T> T wrap(const T &value, const ScalarVector2i &resolution) const {
+        return clamp(value, 0, resolution - 1);
+    }
+
+    Vector3f eval_brdflut(Float cos_theta, Float roughness, Mask active) const {
+        using Int4 = Array<Int32, 4>;
+        using Int24 = Array<Int4, 2>;
+        auto &resolution = m_brdflut.resolution;
+        auto &data = m_brdflut.data;
+        Point2f uv = Point2f(cos_theta, roughness);
+        uv = fmadd(uv, resolution, -.5f);
+        
+        Vector2i uv_i = floor2int<Vector2i>(uv);
+
+        Point2f w1 = uv - Point2f(uv_i), w0 = 1.f - w1;
+        
+        Int24 uv_i_w = wrap(Int24(Int4(0, 1, 0, 1) + uv_i.x(),
+                                          Int4(0, 0, 1, 1) + uv_i.y()), resolution);
+
+        Int4 index = uv_i_w.x() + uv_i_w.y() * resolution.x();
+        
+        Vector3f v00 = gather<Vector3f>(data, index.x(), active),
+                 v10 = gather<Vector3f>(data, index.y(), active),
+                 v01 = gather<Vector3f>(data, index.z(), active),
+                 v11 = gather<Vector3f>(data, index.y(), active);
+
+        Vector3f v0 = fmadd(w0.x(), v00, w1.x() * v10),
+                v1 = fmadd(w0.x(), v01, w1.x() * v11);
+                 
+        return fmadd(w0.y(), v0, w1.y() * v1);
+        //return v00;
     }
 
     Spectrum eval(const BSDFContext &ctx, const SurfaceInteraction3f &si,
                   const Vector3f &wo, Mask active) const override {
         MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
+
+        if (m_ibl) {
+            // local
+            Float cos_theta_i = Frame3f::cos_theta(si.wi);
+            active &= cos_theta_i > 0.0f;
+
+            //Float one(1.0f), zero(0.0f);
+            //Normal3f normal = si.to_world(Normal3f(zero, zero, one));
+            //Vector3f wi = si.to_world(si.wi);
+            //Vector3f r = reflect(wi, normal);
+
+            Vector3f r = si.to_world(reflect(si.wi));
+            r = m_prefiltered_envmap.world_transform->eval(si.time, active).transform_affine(r);
+            
+            
+            Point2f uv = Point2f(atan2(r.x(), -r.z()) * math::InvTwoPi<Float>,
+                                 safe_acos(r.y()) * math::InvPi<Float>);
+
+            //Point2f uv = Point2f(atan2(r.y(), r.x()) * math::InvTwoPi<Float>,
+            //                     safe_acos(r.z()) * math::InvPi<Float>);
+            //Point2f uv = Point2f(atan2(r.x(), r.z()) * math::InvTwoPi<Float>,
+            //                     safe_acos(r.y()) * math::InvPi<Float>);
+
+            uv -= floor(uv);
+            Float roughness = safe_sqrt(m_alpha_u->eval_1(si, active));
+            Float roughness_t = roughness * Float(10);
+            Int32 lodf = Int32(floor(roughness_t));
+            Int32 lodc = Int32(ceil(roughness_t));
+            
+            UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active);
+            UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active);
+            UnpolarizedSpectrum reflection = lerp(a, b, (roughness_t - Float(lodf)) * Float(0.1f));
+
+            Vector3f brdf = eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
+
+            UnpolarizedSpectrum r0 = m_r0->eval(si, active);
+
+            UnpolarizedSpectrum right = r0 * brdf.x() + brdf.y();
+            Spectrum res = reflection * right;
+
+            return res & active;
+            
+        }
 
         Float cos_theta_i = Frame3f::cos_theta(si.wi),
               cos_theta_o = Frame3f::cos_theta(wo);
@@ -346,13 +520,17 @@ public:
                                               -wi_hat, p_axis_in, mueller::stokes_basis(-wi_hat),
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
-            F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
+            if (likely(m_fresnel_shlick)) {
+                UnpolarizedSpectrum r0 = m_r0->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), r0);
+            } else {
+                F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
+            }
         }
 
         /* If requested, include the specular reflectance component */
         if (m_specular_reflectance)
             result *= m_specular_reflectance->eval(si, active);
-
         return (F * result) & active;
     }
 
@@ -365,13 +543,13 @@ public:
 
         // Calculate the half-direction vector
         Vector3f m = normalize(wo + si.wi);
-
+        
         /* Filter cases where the micro/macro-surface don't agree on the side.
            This logic is evaluated in smith_g1() called as part of the eval()
            and sample() methods and needs to be replicated in the probability
            density computation as well. */
         active &= cos_theta_i   > 0.f && cos_theta_o   > 0.f &&
-                  dot(si.wi, m) > 0.f && dot(wo,    m) > 0.f;
+                 dot(si.wi, m) > 0.f && dot(wo,    m) > 0.f;
 
         if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) || none_or<false>(active)))
             return 0.f;
@@ -435,6 +613,24 @@ private:
     ref<Texture> m_k;
     /// Specular reflectance component
     ref<Texture> m_specular_reflectance;
+
+    // use shlick
+    bool m_fresnel_shlick = false;
+    // 'zero angle' reflentance value
+    ref<Texture> m_r0;
+
+    // use ibl
+    bool m_ibl = false;
+    struct {
+        DynamicBuffer<Float> data;
+        ScalarVector2i resolution;
+    } m_brdflut;
+    struct {
+        Vector<DynamicBuffer<Float>, 11> data_list;
+        Vector<ScalarVector2u, 11> resolution_list;
+        ref<const AnimatedTransform> world_transform;
+        float scale;
+    } m_prefiltered_envmap;
 };
 
 MTS_IMPLEMENT_CLASS_VARIANT(RoughConductor, BSDF)

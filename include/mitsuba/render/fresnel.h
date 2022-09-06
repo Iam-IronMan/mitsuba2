@@ -115,6 +115,14 @@ Float fresnel_conductor(Float cos_theta_i, Complex<Float> eta) {
     return .5f * (r_s + r_p);
 }
 
+template <typename Float>
+Float fresnel_conductor_schlick(Float cos_theta_i, Float r0) {
+    Float a      = Float(1.0) - cos_theta_i;
+    Float aa     = a * a;
+    Float result = r0 + (Float(1.0) - r0) * aa * aa * a;
+    return result;
+}
+
 /**
  * \brief Calculates the polarized Fresnel reflection coefficient at a planar
  * interface between two dielectrics. Returns complex values encoding the
