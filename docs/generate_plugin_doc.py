@@ -160,4 +160,4 @@ def generate(build_dir):
     os.chdir(original_wd)
 
 if __name__ == "__main__":
-    generate()
+    generate("C:/MyFile/code/ray tracing/misuba2/mitsuba2/docs/")

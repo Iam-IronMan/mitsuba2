@@ -89,7 +89,7 @@ public:
     MTS_IMPORT_BASE(ProjectiveCamera, m_world_transform, m_needs_sample_3,
                     m_film, m_sampler, m_resolution, m_shutter_open,
                     m_shutter_open_time, m_near_clip, m_far_clip,
-                    m_cx, m_cy, m_focus_distance, m_focus_distance_y)
+                    m_cx, m_cy, m_focus_distance, m_focus_distance_y, m_shearing)
     MTS_IMPORT_TYPES()
 
     // =============================================================
@@ -109,7 +109,7 @@ public:
     void update_camera_transforms() {
         m_camera_to_sample = perspective_projection(
             m_film->size(), m_film->crop_size(), m_film->crop_offset(),
-            m_x_fov, m_cx, m_cy, m_focus_distance, m_focus_distance_y, m_near_clip, m_far_clip);
+            m_x_fov, m_cx, m_cy, m_focus_distance, m_focus_distance_y, m_near_clip, m_far_clip, m_shearing);
 
         m_sample_to_camera = m_camera_to_sample.inverse();
 

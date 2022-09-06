@@ -2,6 +2,6 @@
     "resources/configure.py". Please do not attempt to change it manually,
     as any changes will be overwritten."""
 
-PYTHON_EXECUTABLE = r"C:\ProgramData\Anaconda3\python.exe"
+PYTHON_EXECUTABLE = r"C:\Users\41452\.conda\envs\digitaldouble\python.exe"
 MTS_DEFAULT_VARIANT = ''
-MTS_VARIANTS = ['scalar_rgb', 'scalar_spectral', 'packet_rgb', 'gpu_autodiff_rgb']
+MTS_VARIANTS = ['scalar_rgb', 'scalar_spectral', 'packet_rgb', 'gpu_autodiff_rgb', 'gpu_rgb']

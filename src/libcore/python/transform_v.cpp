@@ -100,7 +100,7 @@ void bind_transform4f(py::module &m, const char *name) {
         .def_static("rotate", &Transform4f::template rotate<4>,
             "axis"_a, "angle"_a, D(Transform, rotate))
         .def_static("perspective", &Transform4f::template perspective<4>,
-            "fov"_a, "near"_a, "far"_a, D(Transform, perspective))
+            "fov"_a, "near"_a, "far"_a, "shearing"_a, D(Transform, perspective))
         .def_static("orthographic", &Transform4f::template orthographic<4>,
             "near"_a, "far"_a, D(Transform, orthographic))
         .def_static("look_at", &Transform4f::template look_at<4>,
