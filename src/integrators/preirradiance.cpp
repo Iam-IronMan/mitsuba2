@@ -36,6 +36,8 @@ public:
 
         Spectrum throughput(1.f), result(0.f);
 
+        Spectrum irradiance(0.f);
+
         // ---------------------- First intersection ----------------------
 
         SurfaceInteraction3f si = scene->ray_intersect(ray, active);
@@ -45,19 +47,27 @@ public:
         Mask need_catch_mask;
         BSDFPtr need_catch_bsdf;
         SurfaceInteraction3f need_catch_si;
+        Mask active_g;
         for (int depth = 1;; ++depth) {
 
             // ---------------- Intersection with emitters ----------------
 
-            if (any_or<true>(neq(emitter, nullptr)))
-                result[active] += emission_weight * throughput * emitter->eval(si, active);
+            if (any_or<true>(neq(emitter, nullptr))) {
+                Spectrum emitter_val = emitter->eval(si, active);
+                result[active] += emission_weight * throughput * emitter_val;
+                if (depth == 2) {                
+                    irradiance[active_g] += emitter_val;
+                    Mask active_t = active && !active_g;
+                    irradiance[active_t] += emission_weight * throughput * emitter_val;
+                }
+            }
 
             active &= si.is_valid();
 
             if (depth == 2) {
                 BSDFContext ctx;
                 Vector3f wo = 0;
-                need_catch_bsdf->catch_irradiance(ctx, need_catch_si, wo, result, need_catch_mask);
+                need_catch_bsdf->catch_irradiance(ctx, need_catch_si, wo, irradiance, need_catch_mask);
                 break;
             }
 
@@ -83,39 +93,33 @@ public:
 
             BSDFContext ctx;
             BSDFPtr bsdf = si.bsdf(ray);
-            Mask active_e = active && has_flag(bsdf->flags(), BSDFFlags::Smooth);
-
-
-            if (likely(any_or<true>(active_e))) {
+            Mask active_e = active && has_flag(bsdf->flags(), BSDFFlags::Reflection);
+            {
                 auto [ds, emitter_val] = scene->sample_emitter_direction(
-                    si, sampler->next_2d(active_e), true, active_e);
-                 //auto [ds, emitter_val] = scene->sample_emitter_direction(
-                 //   si, sampler->next_2d(active_e), false, active_e);
+                        si, sampler->next_2d(active_e), true, active_e);
+                     //auto [ds, emitter_val] = scene->sample_emitter_direction(
+                     //   si, sampler->next_2d(active_e), false, active_e);
                 active_e &= neq(ds.pdf, 0.f);
 
                 // Query the BSDF for that emitter-sampled direction
                 Vector3f wo = si.to_local(ds.d);
                 Spectrum bsdf_val = bsdf->eval(ctx, si, wo, active_e);
                 bsdf_val = si.to_world_mueller(bsdf_val, -wo, si.wi);
-
-
                 // Determine density of sampling that same direction using BSDF sampling
                 Float bsdf_pdf = bsdf->pdf(ctx, si, wo, active_e);
                 Float mis = select(ds.delta, 1.f, mis_weight(ds.pdf, bsdf_pdf));
-                
                 result[active_e] += mis * throughput * bsdf_val * emitter_val;
-
-                //Spectrum tmp = mis * throughput * bsdf_val * emitter_val;
-                // catch irradiance
-                //emitter_val *= mis * throughput;
-                //bsdf->catch_irradiance(ctx, si, wo, result, active_e);
-                //bsdf->save_irradiance();
+            
+                // Diffuse material need to be saved emitter sampling result
+                Mask active_d = active && has_flag(bsdf->flags(), BSDFFlags::DiffuseReflection);
+                irradiance[active_d] += mis * throughput * bsdf_val * emitter_val;
+                ///
 
                 need_catch_mask = active_e;
                 need_catch_bsdf = bsdf;
                 need_catch_si   = si;
+                active_g = active && has_flag(bsdf->flags(), BSDFFlags::GlossyReflection);
             }
-            //break;
 
             // ----------------------- BSDF sampling ----------------------
             //Sample BSDF * cos(theta)

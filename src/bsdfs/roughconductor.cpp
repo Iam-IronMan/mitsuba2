@@ -10,6 +10,8 @@
 #include <mitsuba/core/fstream.h>
 #include <mitsuba/core/fresolver.h>
 #include <array>
+#include <mitsuba/core/rfilter.h>
+#include <mitsuba/core/plugin.h>
 
 NAMESPACE_BEGIN(mitsuba)
 
@@ -147,7 +149,104 @@ template <typename Float, typename Spectrum>
 class RoughConductor final : public BSDF<Float, Spectrum> {
 public:
     MTS_IMPORT_BASE(BSDF, m_flags, m_components)
-    MTS_IMPORT_TYPES(Texture, MicrofacetDistribution)
+    MTS_IMPORT_TYPES(Texture, MicrofacetDistribution, ReconstructionFilter)
+
+    struct CatchBitmap {
+        DynamicBuffer<Float> m_data;
+        DynamicBuffer<Float> m_weights;
+        ScalarVector2i m_resolution;
+        enoki::divisor<int32_t> m_inv_resolution_x;
+        enoki::divisor<int32_t> m_inv_resolution_y;
+
+        ref<Bitmap> m_bitmap = nullptr;
+
+        ref<ReconstructionFilter> m_filter = nullptr;
+        Float *m_weights_x, *m_weights_y;
+        int m_border_size;
+        bool border = false;
+
+        CatchBitmap(int w, int h)
+            : m_resolution(ScalarVector2i(w, h)), m_inv_resolution_x(w),
+            m_inv_resolution_y(h) {
+            m_filter = PluginManager::instance()->create_object<ReconstructionFilter>(Properties("gaussian"));
+            int filter_size = (int) std::ceil(2 * m_filter->radius()) + 1;
+            m_weights_x = new Float[2 * filter_size];
+            m_weights_y = m_weights_x + filter_size;
+
+            m_border_size = border ? m_filter->border_size() : 0;
+            size_t size   = 3 * hprod(m_resolution + 2 * m_border_size);
+            m_data = DynamicBuffer<Float>::zero_(size);
+            m_weights = DynamicBuffer<Float>::zero_(hprod(m_resolution + 2 * m_border_size));
+
+            const Bitmap::Vector2u bsize((uint32_t) w, (uint32_t) h);
+            m_bitmap = new Bitmap(Bitmap::PixelFormat::RGB, Struct::Type::Float32, bsize, 3u, nullptr);
+        }
+        ~CatchBitmap() {
+            if (m_weights_x) {
+                delete[] m_weights_x;
+            }
+        }
+
+        void catch_spec(const Spectrum& spec, const SurfaceInteraction3f& si,
+            Mask active) {
+            Point2f uv = si.uv;
+            uv *= m_resolution;
+
+            std::vector<Float> aovs(3);
+            aovs[0] = spec.x();
+            aovs[1] = spec.y();
+            aovs[2] = spec.z();
+
+            ScalarFloat filter_radius = m_filter->radius();
+            ScalarVector2i size = m_resolution + 2 * m_border_size;
+            Point2f pos = uv - (0 - m_border_size + .5f);
+            Point2u lo =
+                        Point2u(max(ceil2int<Point2i>(pos - filter_radius), 0)),
+                    hi = Point2u(
+                        min(floor2int<Point2i>(pos + filter_radius), size - 1));
+            uint32_t n = ceil2int<uint32_t>(
+                (filter_radius - 2.f * math::RayEpsilon<ScalarFloat>) *2.f);
+
+            Point2f base = lo - pos;
+            for (uint32_t i = 0; i < n; ++i) {
+                Point2f p = base + i;
+                if constexpr (!is_cuda_array_v<Float>) {
+                    m_weights_x[i] = m_filter->eval_discretized(p.x(), active);
+                    m_weights_y[i] = m_filter->eval_discretized(p.y(), active);
+                } else {
+                    m_weights_x[i] = m_filter->eval(p.x(), active);
+                    m_weights_y[i] = m_filter->eval(p.y(), active);
+                }
+            }
+
+            Float wx(0), wy(0);
+            for (uint32_t i = 0; i < n; ++i) {
+                wx += m_weights_x[i];
+                wy += m_weights_y[i];
+            }
+            Float factor = rcp(wx * wy);
+            for (uint32_t i = 0; i < n; ++i)
+                m_weights_x[i] *= factor;
+
+            Float *value = aovs.data();
+            ENOKI_NOUNROLL for (uint32_t yr = 0; yr < n; ++yr) {
+                UInt32 y     = lo.y() + yr;
+                Mask enabled = active && y <= hi.y();
+
+                ENOKI_NOUNROLL for (uint32_t xr = 0; xr < n; ++xr) {
+                    UInt32 x = lo.x() + xr, offset = 3 * (y * size.x() + x);
+                    Float weight = m_weights_y[yr] * m_weights_x[xr];
+
+                    enabled &= x <= hi.x();
+
+                    scatter_add(m_weights, weight, (y * size.x() + x), enabled);
+                    ENOKI_NOUNROLL for (uint32_t k = 0; k < 3; ++k) {
+                        scatter_add(m_data, value[k] * weight, offset + k, enabled);
+                    }
+                }
+            }           
+        }
+    };
 
     RoughConductor(const Properties &props) : Base(props) {
         std::string material = props.string("material", "none");
@@ -191,8 +290,8 @@ public:
             m_specular_reflectance = props.texture<Texture>("specular_reflectance", 1.f);
 
         m_fresnel_shlick = props.bool_("fresnel_shlick", false);
-        if (props.has_property("r0")) {
-            m_r0 = props.texture<Texture>("r0", 0.f);
+        if (props.has_property("f0")) {
+            m_f0 = props.texture<Texture>("f0", 0.f);
         }
 
         m_ibl = props.bool_("ibl", false);
@@ -207,42 +306,34 @@ public:
             m_brdflut.resolution = ScalarVector2i(bitmap->size());
             m_brdflut.data = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_brdflut.resolution) * 3);
 
-            //{
-            //    printf("begin test\n");
-            //    // for test
-            //    DynamicBuffer<Float> data = m_brdflut.data.managed();
-            //    const ScalarFloat *fptr   = data.data();
-            //    float *cdata = new float[hprod(m_brdflut.resolution) * 3];
-            //    for (int i = 0, pixel_count = hprod(m_brdflut.resolution);
-            //         i < pixel_count; ++i) {
-            //        ScalarColor3f fvalue = load_unaligned<ScalarColor3f>(fptr);
-            //        cdata[i * 3 + 0]     = fvalue.x();
-            //        cdata[i * 3 + 1]     = fvalue.y();
-            //        cdata[i * 3 + 2]     = fvalue.z();
-            //        fptr += 3;
-            //    }
-            //    uint8_t *udata = (uint8_t *) cdata;
-            //    const Bitmap::Vector2u size((uint32_t) m_brdflut.resolution.x(),
-            //                                (uint32_t) m_brdflut.resolution.y());
-            //    ref<Bitmap> test_bitmap =
-            //        new Bitmap(Bitmap::PixelFormat::RGB, Struct::Type::Float32,
-            //                   size, 3u, udata);
-            //    test_bitmap->write(fs::path("E:/resources/0000/brdf_temp2/specular0_low/result/approx_f001/test.exr"));
-            //    printf("end test\n");
-            //}
-
             for (int i = 0; i < 11; ++i) {
                 std::string name = (i == 10 ? "env10" : ("env0" + std::to_string(i)));
                 fs::path file_path = fs->resolve(props.string(name));
                 ref<Bitmap> bitmap = new Bitmap(file_path);
-
+                
+#ifdef PREFILTERED
                 bitmap = bitmap->convert(Bitmap::PixelFormat::RGBA, struct_type_v<ScalarFloat>, false);
                 m_prefiltered_envmap.resolution_list[i] = bitmap->size();
                 m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 4);
+#else
+                bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
+                m_prefiltered_envmap.resolution_list[i] = bitmap->size();
+                m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 3);
+#endif
             }
             m_prefiltered_envmap.scale = props.float_("envmap_scale", 1.f);
             m_prefiltered_envmap.world_transform = props.animated_transform("to_world", ScalarTransform4f()).get();
         }
+
+        m_catch_irradiance  = props.bool_("catch_irradiance", false);
+        m_irradiance_width  = props.int_("irradiance_width", 0);
+        m_irradiance_height   = props.int_("irradiance_height", 0);
+        m_irradiance_filename      = props.string("irradiance_filename", "");
+        m_envmap_scale = props.float_("envmap_scale", 1.f);
+        if (m_catch_irradiance) {
+            m_catch_bitmap = new CatchBitmap(m_irradiance_width, m_irradiance_height);
+        }
+        
 
         m_flags = BSDFFlags::GlossyReflection | BSDFFlags::FrontSide;
         if (m_alpha_u != m_alpha_v)
@@ -330,8 +421,8 @@ public:
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
             if (likely(m_fresnel_shlick)) {
-                UnpolarizedSpectrum r0 = m_r0->eval(si, active);
-                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), r0);
+                UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0);
             } else {
                 F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, m)), eta_c);
             }
@@ -343,10 +434,16 @@ public:
         return { bs, (F * weight) & active };
     }
 
+    template <typename T>
+    T wrap(const T &value, const ScalarVector2i &resolution) const {
+        return clamp(value, 0, resolution - 1);
+    }
+
     UnpolarizedSpectrum eval_envmap(Int32 lod, Point2f uv, const Wavelength &wavelengths,
                          Mask active) const {
         //auto& data = gather<DynamicBuffer<Float>>(m_prefiltered_envmap.data_list, lod, active);
         UnpolarizedSpectrum result(0.f);
+#ifdef PREFILTERED
         for (int i = 0; i < 11; ++i) {
             auto &resolution = m_prefiltered_envmap.resolution_list[i];
             auto &data      = m_prefiltered_envmap.data_list[i];
@@ -375,11 +472,38 @@ public:
              result += head<3>(v);
         }
         result *= m_prefiltered_envmap.scale;
-        return result;
-    }
+#else
+        using Int4       = Array<Int32, 4>;
+        using Int24      = Array<Int4, 2>;
+        for (int i = 0; i < 11; ++i) {
+            auto &resolution = m_prefiltered_envmap.resolution_list[i];
+            auto &data       = m_prefiltered_envmap.data_list[i];
+            Point2f uv_t = fmadd(uv, resolution, -.5f);
 
-    template <typename T> T wrap(const T &value, const ScalarVector2i &resolution) const {
-        return clamp(value, 0, resolution - 1);
+            Vector2i uv_i = floor2int<Vector2i>(uv_t);
+
+            Point2f w1 = uv_t - Point2f(uv_i), w0 = 1.f - w1;
+
+            Int24 uv_i_w = wrap(
+                Int24(Int4(0, 1, 0, 1) + uv_i.x(), Int4(0, 0, 1, 1) + uv_i.y()),
+                resolution);
+
+            Int4 index = uv_i_w.x() + uv_i_w.y() * resolution.x();
+            Mask active_e = active;
+            active_e &= eq(lod, i);
+
+            Vector3f v00 = gather<Vector3f>(data, index.x(), active_e),
+                     v10 = gather<Vector3f>(data, index.y(), active_e),
+                     v01 = gather<Vector3f>(data, index.z(), active_e),
+                     v11 = gather<Vector3f>(data, index.y(), active_e);
+
+            Vector3f v0 = fmadd(w0.x(), v00, w1.x() * v10),
+                     v1 = fmadd(w0.x(), v01, w1.x() * v11),
+                     v = fmadd(w0.y(), v0, w1.y() * v1);
+            result += v;
+        }
+#endif
+        return result;
     }
 
     Vector3f eval_brdflut(Float cos_theta, Float roughness, Mask active) const {
@@ -424,7 +548,7 @@ public:
             //Normal3f normal = si.to_world(Normal3f(zero, zero, one));
             //Vector3f wi = si.to_world(si.wi);
             //Vector3f r = reflect(wi, normal);
-
+#ifdef PREFILTERED
             Vector3f r = si.to_world(reflect(si.wi));
             r = m_prefiltered_envmap.world_transform->eval(si.time, active).transform_affine(r);
             
@@ -438,6 +562,9 @@ public:
             //                     safe_acos(r.y()) * math::InvPi<Float>);
 
             uv -= floor(uv);
+#else
+            Point2f uv = si.uv;
+#endif
             Float roughness = safe_sqrt(m_alpha_u->eval_1(si, active));
             Float roughness_t = roughness * Float(10);
             Int32 lodf = Int32(floor(roughness_t));
@@ -449,9 +576,9 @@ public:
 
             Vector3f brdf = eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
 
-            UnpolarizedSpectrum r0 = m_r0->eval(si, active);
+            UnpolarizedSpectrum f0 = m_f0->eval(si, active);
 
-            UnpolarizedSpectrum right = r0 * brdf.x() + brdf.y();
+            UnpolarizedSpectrum right = f0 * brdf.x() + brdf.y();
             Spectrum res = reflection * right;
 
             return res & active;
@@ -521,8 +648,8 @@ public:
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
             if (likely(m_fresnel_shlick)) {
-                UnpolarizedSpectrum r0 = m_r0->eval(si, active);
-                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), r0);
+                UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
             } else {
                 F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
             }
@@ -571,6 +698,69 @@ public:
         return select(active, result, 0.f);
     }
 
+    void catch_irradiance(const BSDFContext &ctx,
+        const SurfaceInteraction3f &si, 
+        const Vector3f &wo,
+        const Spectrum &emitter_val,
+        Mask active) const override {
+
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
+
+
+        if (!m_catch_irradiance) {
+            return;
+        }
+
+        Spectrum irradiance_val = select(active, emitter_val, 0.f);
+
+        m_catch_bitmap->catch_spec(irradiance_val, si, active);
+    }
+
+    void acc_irradiance(float factor) const override {
+        if (!m_catch_irradiance || factor <= 0) {
+            return;
+        }
+        
+        auto m_data  = m_catch_bitmap->m_data.managed();
+        auto m_weights  = m_catch_bitmap->m_weights.managed();
+        const ScalarFloat *fptr = m_data.data();
+        const ScalarFloat *wptr = m_weights.data();
+        float *cdata            = new float[hprod(m_catch_bitmap->m_resolution) * 3];
+
+        //factor *= m_envmap_scale;
+        for (int i = 0, pixel_count = hprod(m_catch_bitmap->m_resolution);
+             i < pixel_count; ++i) {
+            ScalarColor3f fvalue = load_unaligned<ScalarColor3f>(fptr);
+            ScalarFloat wvalue   = load_unaligned<ScalarFloat>(wptr);
+            if (wvalue > 0) {
+                cdata[i * 3 + 0] = fvalue.x() * factor / wvalue;
+                cdata[i * 3 + 1] = fvalue.y() * factor / wvalue;
+                cdata[i * 3 + 2] = fvalue.z() * factor / wvalue;
+            }
+            fptr += 3;
+            ++wptr;
+        }
+        uint8_t *udata = (uint8_t *) cdata;
+        const Bitmap::Vector2u size((uint32_t) m_irradiance_width,
+                                    (uint32_t) m_irradiance_height);
+
+        ref<Bitmap> irrad_bitmap = new Bitmap(Bitmap::PixelFormat::RGB, Struct::Type::Float32, size, 3u, udata);
+        m_catch_bitmap->m_bitmap->accumulate(irrad_bitmap, 0, 0, size);
+        // clear
+        m_catch_bitmap->m_data *= 0;
+        m_catch_bitmap->m_weights *= 0;
+
+        delete cdata;
+        //std::cout << "aha! save glossy irradiance\n";
+    }
+
+    void save_irradiance() const override {
+        if (!m_catch_irradiance || m_catch_bitmap == nullptr || m_catch_bitmap->m_bitmap == nullptr) {
+            return;
+        }
+        m_catch_bitmap->m_bitmap->write(fs::path(m_irradiance_filename));
+    }
+
     void traverse(TraversalCallback *callback) override {
         if (!has_flag(m_flags, BSDFFlags::Anisotropic))
             callback->put_object("alpha", m_alpha_u.get());
@@ -580,6 +770,7 @@ public:
         }
         callback->put_object("eta", m_eta.get());
         callback->put_object("k", m_k.get());
+        callback->put_object("f0", m_f0.get());
         if (m_specular_reflectance)
             callback->put_object("specular_reflectance", m_specular_reflectance.get());
     }
@@ -617,7 +808,7 @@ private:
     // use shlick
     bool m_fresnel_shlick = false;
     // 'zero angle' reflentance value
-    ref<Texture> m_r0;
+    ref<Texture> m_f0;
 
     // use ibl
     bool m_ibl = false;
@@ -631,6 +822,13 @@ private:
         ref<const AnimatedTransform> world_transform;
         float scale;
     } m_prefiltered_envmap;
+
+    // catch irradiance
+    bool m_catch_irradiance = false;
+    int m_irradiance_width, m_irradiance_height;
+    std::string m_irradiance_filename;
+    float m_envmap_scale;
+    CatchBitmap *m_catch_bitmap;
 };
 
 MTS_IMPLEMENT_CLASS_VARIANT(RoughConductor, BSDF)
