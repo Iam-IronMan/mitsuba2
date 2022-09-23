@@ -186,12 +186,31 @@ public:
                 delete[] m_weights_x;
             }
         }
+        template <typename T> T wrap(const T &value) const {
+            T div = T(m_inv_resolution_x(value.x()),
+                      m_inv_resolution_y(value.y())),
+              mod = value - div * m_resolution;
 
+            masked(mod, mod < 0) += T(m_resolution);
+
+            return mod;
+        }
         void catch_spec(const Spectrum& spec, const SurfaceInteraction3f& si,
             Mask active) {
             Point2f uv = si.uv;
             uv *= m_resolution;
+//#define GEN_BASE
+#ifdef GEN_BASE
 
+            Vector2i uv_i   = floor2int<Vector2i>(uv);
+            Vector2i uv_i_w = wrap(uv_i);
+
+            Int32 index = uv_i.x() + uv_i.y() * m_resolution.x();
+            // m_dtmp *= 0;
+            // scatter(m_dtmp, spec, index, active);
+            // m_data += m_dtmp;
+            scatter(m_data, spec, index, active);
+#else
             std::vector<Float> aovs(3);
             aovs[0] = spec.x();
             aovs[1] = spec.y();
@@ -245,6 +264,7 @@ public:
                     }
                 }
             }           
+#endif
         }
     };
 
@@ -306,11 +326,26 @@ public:
             m_brdflut.resolution = ScalarVector2i(bitmap->size());
             m_brdflut.data = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_brdflut.resolution) * 3);
 
-            for (int i = 0; i < 11; ++i) {
-                std::string name = (i == 10 ? "env10" : ("env0" + std::to_string(i)));
-                fs::path file_path = fs->resolve(props.string(name));
+
+            std::string pre_envmap_root = props.string("prefiltered_envmap_root");
+            if (pre_envmap_root[pre_envmap_root.size() - 1] != '/' ||
+                pre_envmap_root[pre_envmap_root.size() - 1] != '\\') {
+                pre_envmap_root += '/';
+            }
+            //for (int i = 0; i < 11; ++i) {
+            //    int tagi = i / 10.0 * 10;
+            //    std::string tag = std::to_string(tagi);
+            //    std::string name = (i == 10 ? "env10.exr" : ("env0" + tag + ".exr")); 
+            //    fs::path file_path = fs->resolve(pre_envmap_root + name); 
+            //    ref<Bitmap> bitmap = new Bitmap(file_path);
+            for (int i = 0; i < 41; ++i) {
+                int tagi = i / 40.0 * 1000;
+                std::string tag = std::to_string(tagi);
+                if (tag.size() < 2) tag = "00" + tag;
+                else if (tag.size() < 3) tag = "0" + tag;
+                std::string name = (i == 40 ? "env1000.exr" : ("env0" + tag + ".exr"));
+                fs::path file_path = fs->resolve(pre_envmap_root + name);
                 ref<Bitmap> bitmap = new Bitmap(file_path);
-                
 #ifdef PREFILTERED
                 bitmap = bitmap->convert(Bitmap::PixelFormat::RGBA, struct_type_v<ScalarFloat>, false);
                 m_prefiltered_envmap.resolution_list[i] = bitmap->size();
@@ -322,7 +357,7 @@ public:
 #endif
             }
             m_prefiltered_envmap.scale = props.float_("envmap_scale", 1.f);
-            m_prefiltered_envmap.world_transform = props.animated_transform("to_world", ScalarTransform4f()).get();
+            m_prefiltered_envmap.world_transform = props.animated_transform("envmap_to_world", ScalarTransform4f()).get();
         }
 
         m_catch_irradiance  = props.bool_("catch_irradiance", false);
@@ -440,7 +475,7 @@ public:
     }
 
     UnpolarizedSpectrum eval_envmap(Int32 lod, Point2f uv, const Wavelength &wavelengths,
-                         Mask active) const {
+                         Mask active, int32_t bottom, int32_t up) const {
         //auto& data = gather<DynamicBuffer<Float>>(m_prefiltered_envmap.data_list, lod, active);
         UnpolarizedSpectrum result(0.f);
 #ifdef PREFILTERED
@@ -475,7 +510,7 @@ public:
 #else
         using Int4       = Array<Int32, 4>;
         using Int24      = Array<Int4, 2>;
-        for (int i = 0; i < 11; ++i) {
+        for(int i = bottom; i <= up; ++i) {
             auto &resolution = m_prefiltered_envmap.resolution_list[i];
             auto &data       = m_prefiltered_envmap.data_list[i];
             Point2f uv_t = fmadd(uv, resolution, -.5f);
@@ -565,14 +600,24 @@ public:
 #else
             Point2f uv = si.uv;
 #endif
-            Float roughness = safe_sqrt(m_alpha_u->eval_1(si, active));
-            Float roughness_t = roughness * Float(10);
+            Float alpha = clamp(m_alpha_u->eval_1(si, active), Float(0.0), Float(1.0));
+            Float roughness   = sqrt(alpha);
+            //Float roughness_t = roughness * Float(10);
+            Float roughness_t = roughness * Float(40);
             Int32 lodf = Int32(floor(roughness_t));
             Int32 lodc = Int32(ceil(roughness_t));
+
+            //DynamicBuffer<Int32> bottom = hmin(lodf);
+            //DynamicBuffer<Int32> top = hmax(lodc);
+            //int32_t *bptr = bottom.managed().data();
+            //int32_t *tptr = top.managed().data();
+            //int bottom_value = *bptr;
+            //int top_value = *tptr;
             
-            UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active);
-            UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active);
-            UnpolarizedSpectrum reflection = lerp(a, b, (roughness_t - Float(lodf)) * Float(0.1f));
+            UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active, 0, 40);
+            UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active, 0, 40);
+            //UnpolarizedSpectrum reflection = lerp(a, b, (roughness_t - Float(lodf)) * Float(0.1f));
+            UnpolarizedSpectrum reflection = lerp(a, b, (roughness_t - Float(lodf)) * Float(0.25f));
 
             Vector3f brdf = eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
 
@@ -817,8 +862,8 @@ private:
         ScalarVector2i resolution;
     } m_brdflut;
     struct {
-        Vector<DynamicBuffer<Float>, 11> data_list;
-        Vector<ScalarVector2u, 11> resolution_list;
+        Vector<DynamicBuffer<Float>, 41> data_list;
+        Vector<ScalarVector2u, 41> resolution_list;
         ref<const AnimatedTransform> world_transform;
         float scale;
     } m_prefiltered_envmap;
