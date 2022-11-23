@@ -118,6 +118,19 @@ public:
                                              Float *aovs = nullptr,
                                              Mask active = true) const;
 
+
+    virtual std::pair<Spectrum, Mask>
+    sample_window(const Scene *scene, Sampler *sampler, const RayDifferential3f &ray_main,
+             const RayDifferential3f &ray_sub, const Medium *medium = nullptr,
+             Float *aovs = nullptr, Mask active = true, Mask active_sub = true) const;
+
+    virtual std::pair<Spectrum, Mask> sample_multiview(const Scene *scene,
+                                             Sampler *sampler,
+                                             const RayDifferential3f &ray,
+                                             const int view_index,
+                                             const Medium *medium = nullptr,
+                                             Float *aovs = nullptr,
+                                             Mask active = true) const;
     /**
      * For integrators that return one or more arbitrary output variables
      * (AOVs), this function specifies a list of associated channel names. The

@@ -167,7 +167,7 @@ public:
 
         CatchBitmap(int w, int h)
             : m_resolution(ScalarVector2i(w, h)), m_inv_resolution_x(w),
-            m_inv_resolution_y(h) {
+              m_inv_resolution_y(h) {
             m_filter = PluginManager::instance()->create_object<ReconstructionFilter>(Properties("gaussian"));
             int filter_size = (int) std::ceil(2 * m_filter->radius()) + 1;
             m_weights_x = new Float[2 * filter_size];
@@ -314,6 +314,10 @@ public:
             m_f0 = props.texture<Texture>("f0", 0.f);
         }
 
+        if (props.has_property("f90")) {
+            m_f90 = props.texture<Texture>("f90", 1.0f);
+        }
+
         m_ibl = props.bool_("ibl", false);
         if (m_ibl) {
             FileResolver *fs = Thread::thread()->file_resolver();
@@ -328,36 +332,55 @@ public:
 
 
             std::string pre_envmap_root = props.string("prefiltered_envmap_root");
-            if (pre_envmap_root[pre_envmap_root.size() - 1] != '/' ||
-                pre_envmap_root[pre_envmap_root.size() - 1] != '\\') {
-                pre_envmap_root += '/';
-            }
-            //for (int i = 0; i < 11; ++i) {
-            //    int tagi = i / 10.0 * 10;
-            //    std::string tag = std::to_string(tagi);
-            //    std::string name = (i == 10 ? "env10.exr" : ("env0" + tag + ".exr")); 
-            //    fs::path file_path = fs->resolve(pre_envmap_root + name); 
-            //    ref<Bitmap> bitmap = new Bitmap(file_path);
-            for (int i = 0; i < 41; ++i) {
-                int tagi = i / 40.0 * 1000;
-                std::string tag = std::to_string(tagi);
-                if (tag.size() < 2) tag = "00" + tag;
-                else if (tag.size() < 3) tag = "0" + tag;
-                std::string name = (i == 40 ? "env1000.exr" : ("env0" + tag + ".exr"));
-                fs::path file_path = fs->resolve(pre_envmap_root + name);
-                ref<Bitmap> bitmap = new Bitmap(file_path);
+
+            m_ibl_multiview = props.bool_("ibl_multiview", false);
+            if (m_ibl_multiview) {
+                for (int j = 0; j < 4; ++j) {
+                    for (int i = 0; i < 41; ++i) {
+                        int tagi = i / 40.0 * 1000;
+                        std::string tag = std::to_string(tagi);
+                        if (tag.size() < 2) tag = "000" + tag;
+                        else if (tag.size() < 3) tag = "00" + tag;
+                        else if (tag.size() < 4) tag = "0" + tag;
+                        std::string name = (i == 40 ? (std::to_string(j) + "_env1000.exr") : (std::to_string(j) +"_env" + tag + ".exr"));
+                        fs::path file_path = fs->resolve(pre_envmap_root + name);
+                        ref<Bitmap> bitmap = new Bitmap(file_path);
+                        bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
+                        m_prefiltered_envmap.multiview_reso_list[j * 41 + i] = bitmap->size();
+                        m_prefiltered_envmap.multiview_data_list[j * 41 + i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.multiview_reso_list[j * 41 + i]) * 3);
+                    }
+                }
+            } else {
+                //for (int i = 0; i < 11; ++i) {
+                //    int tagi = i / 10.0 * 10;
+                //    std::string tag = std::to_string(tagi);
+                //    std::string name = (i == 10 ? "env10.exr" : ("env0" + tag + ".exr")); 
+                //    fs::path file_path = fs->resolve(pre_envmap_root + name); 
+                //    ref<Bitmap> bitmap = new Bitmap(file_path);
+
+                for (int i = 0; i < 41; ++i) {
+                    int tagi = i / 40.0 * 1000;
+                    std::string tag = std::to_string(tagi);
+                    if (tag.size() < 2) tag = "00" + tag;
+                    else if (tag.size() < 3) tag = "0" + tag;
+                    std::string name = (i == 40 ? "env1000.exr" : ("env0" + tag + ".exr"));
+                    fs::path file_path = fs->resolve(pre_envmap_root + name);
+                    ref<Bitmap> bitmap = new Bitmap(file_path);
 #ifdef PREFILTERED
-                bitmap = bitmap->convert(Bitmap::PixelFormat::RGBA, struct_type_v<ScalarFloat>, false);
-                m_prefiltered_envmap.resolution_list[i] = bitmap->size();
-                m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 4);
+                    bitmap = bitmap->convert(Bitmap::PixelFormat::RGBA, struct_type_v<ScalarFloat>, false);
+                    m_prefiltered_envmap.resolution_list[i] = bitmap->size();
+                    m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 4);
 #else
-                bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
-                m_prefiltered_envmap.resolution_list[i] = bitmap->size();
-                m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 3);
+                    bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
+                    m_prefiltered_envmap.resolution_list[i] = bitmap->size();
+                    m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 3);
 #endif
+                }
             }
             m_prefiltered_envmap.scale = props.float_("envmap_scale", 1.f);
-            m_prefiltered_envmap.world_transform = props.animated_transform("envmap_to_world", ScalarTransform4f()).get();
+            if (props.has_property("envmap_to_world")) {
+                m_prefiltered_envmap.world_transform = props.animated_transform("envmap_to_world", ScalarTransform4f()).get();
+            }
         }
 
         m_catch_irradiance  = props.bool_("catch_irradiance", false);
@@ -368,6 +391,8 @@ public:
         if (m_catch_irradiance) {
             m_catch_bitmap = new CatchBitmap(m_irradiance_width, m_irradiance_height);
         }
+
+        m_forward = props.bool_("forward", false);
         
 
         m_flags = BSDFFlags::GlossyReflection | BSDFFlags::FrontSide;
@@ -530,7 +555,7 @@ public:
             Vector3f v00 = gather<Vector3f>(data, index.x(), active_e),
                      v10 = gather<Vector3f>(data, index.y(), active_e),
                      v01 = gather<Vector3f>(data, index.z(), active_e),
-                     v11 = gather<Vector3f>(data, index.y(), active_e);
+                     v11 = gather<Vector3f>(data, index.w(), active_e);
 
             Vector3f v0 = fmadd(w0.x(), v00, w1.x() * v10),
                      v1 = fmadd(w0.x(), v01, w1.x() * v11),
@@ -541,6 +566,42 @@ public:
         return result;
     }
 
+    UnpolarizedSpectrum eval_envmap_multiview(Int32 lod, Point2f uv, const Wavelength &wavelengths,
+                         Mask active, int32_t bottom, int32_t up, int32_t view_index) const {
+        //auto& data = gather<DynamicBuffer<Float>>(m_prefiltered_envmap.data_list, lod, active);
+        UnpolarizedSpectrum result(0.f);
+
+        using Int4       = Array<Int32, 4>;
+        using Int24      = Array<Int4, 2>;
+        for(int i = bottom; i <= up; ++i) {
+            auto &resolution = m_prefiltered_envmap.multiview_reso_list[view_index * 41 + i];
+            auto &data       = m_prefiltered_envmap.multiview_data_list[view_index * 41 + i];
+            Point2f uv_t = fmadd(uv, resolution, -.5f);
+
+            Vector2i uv_i = floor2int<Vector2i>(uv_t);
+
+            Point2f w1 = uv_t - Point2f(uv_i), w0 = 1.f - w1;
+
+            Int24 uv_i_w = wrap(
+                Int24(Int4(0, 1, 0, 1) + uv_i.x(), Int4(0, 0, 1, 1) + uv_i.y()),
+                resolution);
+
+            Int4 index = uv_i_w.x() + uv_i_w.y() * resolution.x();
+            Mask active_e = active;
+            active_e &= eq(lod, i);
+
+            Vector3f v00 = gather<Vector3f>(data, index.x(), active_e),
+                     v10 = gather<Vector3f>(data, index.y(), active_e),
+                     v01 = gather<Vector3f>(data, index.z(), active_e),
+                     v11 = gather<Vector3f>(data, index.w(), active_e);
+
+            Vector3f v0 = fmadd(w0.x(), v00, w1.x() * v10),
+                     v1 = fmadd(w0.x(), v01, w1.x() * v11),
+                     v = fmadd(w0.y(), v0, w1.y() * v1);
+            result += v;
+        }
+        return result;
+    }
     Vector3f eval_brdflut(Float cos_theta, Float roughness, Mask active) const {
         using Int4 = Array<Int32, 4>;
         using Int24 = Array<Int4, 2>;
@@ -561,7 +622,7 @@ public:
         Vector3f v00 = gather<Vector3f>(data, index.x(), active),
                  v10 = gather<Vector3f>(data, index.y(), active),
                  v01 = gather<Vector3f>(data, index.z(), active),
-                 v11 = gather<Vector3f>(data, index.y(), active);
+                 v11 = gather<Vector3f>(data, index.w(), active);
 
         Vector3f v0 = fmadd(w0.x(), v00, w1.x() * v10),
                 v1 = fmadd(w0.x(), v01, w1.x() * v11);
@@ -578,6 +639,10 @@ public:
             // local
             Float cos_theta_i = Frame3f::cos_theta(si.wi);
             active &= cos_theta_i > 0.0f;
+
+            if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
+                         none_or<false>(active)))
+                return 0.f;
 
             //Float one(1.0f), zero(0.0f);
             //Normal3f normal = si.to_world(Normal3f(zero, zero, one));
@@ -599,31 +664,56 @@ public:
             uv -= floor(uv);
 #else
             Point2f uv = si.uv;
-#endif
-            Float alpha = clamp(m_alpha_u->eval_1(si, active), Float(0.0), Float(1.0));
-            Float roughness   = sqrt(alpha);
+#endif  
+            Float alpha(0.0f);
+            if (likely(m_forward)) {
+                alpha = m_alpha_u->eval_1(si, active);
+            } else {
+                // sigmoid
+                Float in_alpha = m_alpha_u->eval_1(si, active);
+                alpha    = Float(1.f) + exp(-in_alpha);
+                alpha    = Float(1.f) / alpha;
+                ////
+            }
+            Float roughness = safe_sqrt(alpha);
+            
+            //Float alpha = clamp(m_alpha_u->eval_1(si, active), Float(0.0), Float(1.0));
+            //Float roughness   = sqrt(alpha);
             //Float roughness_t = roughness * Float(10);
-            Float roughness_t = roughness * Float(40);
+
+            //Float roughness_t = roughness * Float(40);
+            Float roughness_t = alpha * Float(40);
             Int32 lodf = Int32(floor(roughness_t));
             Int32 lodc = Int32(ceil(roughness_t));
 
-            //DynamicBuffer<Int32> bottom = hmin(lodf);
-            //DynamicBuffer<Int32> top = hmax(lodc);
-            //int32_t *bptr = bottom.managed().data();
-            //int32_t *tptr = top.managed().data();
-            //int bottom_value = *bptr;
-            //int top_value = *tptr;
+            DynamicBuffer<Int32> bottom = hmin(lodf);
+            DynamicBuffer<Int32> top = hmax(lodc);
+            int32_t *bptr = bottom.managed().data();
+            int32_t *tptr = top.managed().data();
+            int bottom_value = *bptr;
+            int top_value = *tptr;
+            UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active, bottom_value, top_value);
+            UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active, bottom_value, top_value);
             
-            UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active, 0, 40);
-            UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active, 0, 40);
-            //UnpolarizedSpectrum reflection = lerp(a, b, (roughness_t - Float(lodf)) * Float(0.1f));
-            UnpolarizedSpectrum reflection = lerp(a, b, (roughness_t - Float(lodf)) * Float(0.25f));
+            //UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active, 0, 40);
+            //UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active, 0, 40);
+            UnpolarizedSpectrum reflection = lerp(a, b, roughness_t - Float(lodf));
 
             Vector3f brdf = eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
 
-            UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+            UnpolarizedSpectrum f0(0.0f); 
+            if (likely(m_forward)) {
+                f0 = m_f0->eval(si, active);
+            } else {
+                // sigmoid
+                UnpolarizedSpectrum in_f0 = m_f0->eval(si, active);
+                f0 = UnpolarizedSpectrum(1.f) + exp(-in_f0);
+                f0                     = Float(1.f) / f0;
+                ////
+            }
 
-            UnpolarizedSpectrum right = f0 * brdf.x() + brdf.y();
+            UnpolarizedSpectrum f90   = m_f90->eval(si, active);
+            UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
             Spectrum res = reflection * right;
 
             return res & active;
@@ -706,6 +796,175 @@ public:
         return (F * result) & active;
     }
 
+    Spectrum eval_multiview(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                  const Vector3f &wo, const int view_index_, Mask active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
+
+        if (m_ibl && m_ibl_multiview) {
+            if (view_index_ < 0) {
+                return 0.f;
+            }
+            int view_index = view_index_;
+
+            view_index %= m_prefiltered_envmap.view_count;
+            // local
+            Float cos_theta_i = Frame3f::cos_theta(si.wi);
+            active &= cos_theta_i > 0.0f;
+
+            if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
+                         none_or<false>(active)))
+                return 0.f;
+            //Float one(1.0f), zero(0.0f);
+            //Normal3f normal = si.to_world(Normal3f(zero, zero, one));
+            //Vector3f wi = si.to_world(si.wi);
+            //Vector3f r = reflect(wi, normal);
+#ifdef PREFILTERED
+            Vector3f r = si.to_world(reflect(si.wi));
+            r = m_prefiltered_envmap.world_transform->eval(si.time, active).transform_affine(r);
+            
+            
+            Point2f uv = Point2f(atan2(r.x(), -r.z()) * math::InvTwoPi<Float>,
+                                 safe_acos(r.y()) * math::InvPi<Float>);
+
+            //Point2f uv = Point2f(atan2(r.y(), r.x()) * math::InvTwoPi<Float>,
+            //                     safe_acos(r.z()) * math::InvPi<Float>);
+            //Point2f uv = Point2f(atan2(r.x(), r.z()) * math::InvTwoPi<Float>,
+            //                     safe_acos(r.y()) * math::InvPi<Float>);
+
+            uv -= floor(uv);
+#else
+            Point2f uv = si.uv;
+#endif  
+            Float alpha(0.0f);
+            if (likely(m_forward)) {
+                alpha = m_alpha_u->eval_1(si, active);
+            } else {
+                // sigmoid
+                Float in_alpha = m_alpha_u->eval_1(si, active);
+                alpha    = Float(1.f) + exp(-in_alpha);
+                alpha    = Float(1.f) / alpha;
+                ////
+            }
+            Float roughness = safe_sqrt(alpha);
+            
+            //Float alpha = clamp(m_alpha_u->eval_1(si, active), Float(0.0), Float(1.0));
+            //Float roughness   = sqrt(alpha);
+            //Float roughness_t = roughness * Float(10);
+            
+            //Float roughness_t = roughness * Float(40);
+            Float roughness_t = alpha * Float(40);
+            Int32 lodf = Int32(floor(roughness_t));
+            Int32 lodc = Int32(ceil(roughness_t));
+
+            DynamicBuffer<Int32> bottom = hmin(lodf);
+            DynamicBuffer<Int32> top = hmax(lodc);
+            int32_t *bptr = bottom.managed().data();
+            int32_t *tptr = top.managed().data();
+            int bottom_value = *bptr;
+            int top_value = *tptr;
+            UnpolarizedSpectrum a = eval_envmap_multiview(lodf, uv, si.wavelengths, active, bottom_value, top_value, view_index);
+            UnpolarizedSpectrum b = eval_envmap_multiview(lodc, uv, si.wavelengths, active, bottom_value, top_value, view_index);
+            
+            //UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active, 0, 40);
+            //UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active, 0, 40);
+            UnpolarizedSpectrum reflection = lerp(a, b, roughness_t - Float(lodf));
+
+            Vector3f brdf = eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
+
+            UnpolarizedSpectrum f0(0.0f); 
+            if (likely(m_forward)) {
+                f0 = m_f0->eval(si, active);
+            } else {
+                // sigmoid
+                UnpolarizedSpectrum in_f0 = m_f0->eval(si, active);
+                f0 = UnpolarizedSpectrum(1.f) + exp(-in_f0);
+                f0                     = Float(1.f) / f0;
+                ////
+            }
+
+            UnpolarizedSpectrum f90   = m_f90->eval(si, active);
+            UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
+            Spectrum res = reflection * right;
+
+            return res & active;
+            
+        }
+
+        Float cos_theta_i = Frame3f::cos_theta(si.wi),
+              cos_theta_o = Frame3f::cos_theta(wo);
+
+        active &= cos_theta_i > 0.f && cos_theta_o > 0.f;
+
+        if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) || none_or<false>(active)))
+            return 0.f;
+
+        // Calculate the half-direction vector
+        Vector3f H = normalize(wo + si.wi);
+
+        /* Construct a microfacet distribution matching the
+           roughness values at the current surface position. */
+        MicrofacetDistribution distr(m_type,
+                                     m_alpha_u->eval_1(si, active),
+                                     m_alpha_v->eval_1(si, active),
+                                     m_sample_visible);
+
+        // Evaluate the microfacet normal distribution
+        Float D = distr.eval(H);
+
+        active &= neq(D, 0.f);
+
+        // Evaluate Smith's shadow-masking function
+        Float G = distr.G(si.wi, wo, H);
+
+        // Evaluate the full microfacet model (except Fresnel)
+        UnpolarizedSpectrum result = D * G / (4.f * Frame3f::cos_theta(si.wi));
+
+        // Evaluate the Fresnel factor
+        Complex<UnpolarizedSpectrum> eta_c(m_eta->eval(si, active),
+                                           m_k->eval(si, active));
+
+        Spectrum F;
+        if constexpr (is_polarized_v<Spectrum>) {
+            /* Due to lack of reciprocity in polarization-aware pBRDFs, they are
+               always evaluated w.r.t. the actual light propagation direction, no
+               matter the transport mode. In the following, 'wi_hat' is toward the
+               light source. */
+            Vector3f wi_hat = ctx.mode == TransportMode::Radiance ? wo : si.wi,
+                     wo_hat = ctx.mode == TransportMode::Radiance ? si.wi : wo;
+
+            // Mueller matrix for specular reflection.
+            F = mueller::specular_reflection(UnpolarizedSpectrum(Frame3f::cos_theta(wi_hat)), eta_c);
+
+            /* Apply frame reflection, according to "Stellar Polarimetry" by
+               David Clarke, Appendix A.2 (A26) */
+            F = mueller::reverse(F);
+
+            /* The Stokes reference frame vector of this matrix lies in the plane
+               of reflection. */
+            Vector3f s_axis_in  = normalize(cross(H, -wi_hat)),
+                     p_axis_in  = normalize(cross(-wi_hat, s_axis_in)),
+                     s_axis_out = normalize(cross(H, wo_hat)),
+                     p_axis_out = normalize(cross(wo_hat, s_axis_out));
+
+            /* Rotate in/out reference vector of F s.t. it aligns with the implicit
+               Stokes bases of -wi_hat & wo_hat. */
+            F = mueller::rotate_mueller_basis(F,
+                                              -wi_hat, p_axis_in, mueller::stokes_basis(-wi_hat),
+                                               wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
+        } else {
+            if (likely(m_fresnel_shlick)) {
+                UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
+            } else {
+                F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
+            }
+        }
+
+        /* If requested, include the specular reflectance component */
+        if (m_specular_reflectance)
+            result *= m_specular_reflectance->eval(si, active);
+        return (F * result) & active;
+    }
     Float pdf(const BSDFContext &ctx, const SurfaceInteraction3f &si,
               const Vector3f &wo, Mask active) const override {
         MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
@@ -741,6 +1000,300 @@ public:
             result = distr.pdf(si.wi, m) / (4.f * dot(wo, m));
 
         return select(active, result, 0.f);
+    }
+
+    Spectrum eval_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                  const SurfaceInteraction3f &sub_si, const Vector3f &wo,
+                         Mask active, Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, sub_active);
+
+        if (m_ibl) {
+            // local
+            Float cos_theta_i = Frame3f::cos_theta(sub_si.wi);
+            sub_active &= cos_theta_i > 0.0f;
+
+            if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
+                         none_or<false>(sub_active)))
+                return 0.f;
+
+            // Float one(1.0f), zero(0.0f);
+            // Normal3f normal = si.to_world(Normal3f(zero, zero, one));
+            // Vector3f wi = si.to_world(si.wi);
+            // Vector3f r = reflect(wi, normal);
+#ifdef PREFILTERED
+            Vector3f r = si.to_world(reflect(si.wi));
+            r = m_prefiltered_envmap.world_transform->eval(si.time, active)
+                    .transform_affine(r);
+
+            Point2f uv = Point2f(atan2(r.x(), -r.z()) * math::InvTwoPi<Float>,
+                                 safe_acos(r.y()) * math::InvPi<Float>);
+
+            // Point2f uv = Point2f(atan2(r.y(), r.x()) * math::InvTwoPi<Float>,
+            //                     safe_acos(r.z()) * math::InvPi<Float>);
+            // Point2f uv = Point2f(atan2(r.x(), r.z()) * math::InvTwoPi<Float>,
+            //                     safe_acos(r.y()) * math::InvPi<Float>);
+
+            uv -= floor(uv);
+#else
+            Point2f uv = sub_si.uv;
+#endif
+            // sigmoid
+            Float in_alpha = m_alpha_u->eval_1(si, sub_active);
+            Float alpha    = Float(1.f) + exp(-in_alpha);
+            alpha          = Float(1.f) / alpha;
+            ////
+            Float roughness   = safe_sqrt(alpha);
+
+            //Float alpha = m_alpha_u->eval_1(si, active);
+            //Float roughness   = safe_sqrt(alpha);
+
+            // Float roughness_t = roughness * Float(10);
+            Float roughness_t = roughness * Float(40);
+            Int32 lodf        = Int32(floor(roughness_t));
+            Int32 lodc        = Int32(ceil(roughness_t));
+
+            DynamicBuffer<Int32> bottom = hmin(lodf);
+            DynamicBuffer<Int32> top = hmax(lodc);
+            int32_t *bptr = bottom.managed().data();
+            int32_t *tptr = top.managed().data();
+            int bottom_value = *bptr;
+            int top_value = *tptr;
+            UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, sub_active, bottom_value, top_value);
+            UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, sub_active, bottom_value, top_value);
+
+            //UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, sub_active, 0, 40);
+            //UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, sub_active, 0, 40);
+
+            UnpolarizedSpectrum reflection = lerp(a, b, roughness_t - Float(lodf));
+
+            Vector3f brdf = eval_brdflut(cos_theta_i, Float(1.0f) - roughness, sub_active);
+
+            // sigmoid
+            UnpolarizedSpectrum in_f0 = m_f0->eval(si, sub_active);
+            UnpolarizedSpectrum f0    = UnpolarizedSpectrum(1.f) + exp(-in_f0);
+            f0                        = UnpolarizedSpectrum(1.f) / f0;
+            ////
+
+            UnpolarizedSpectrum right = f0 * brdf.x() + brdf.y();
+            Spectrum res              = reflection * right;
+
+            return res & sub_active;
+        }
+
+        Float cos_theta_i = Frame3f::cos_theta(sub_si.wi),
+              cos_theta_o = Frame3f::cos_theta(wo);
+
+        sub_active &= cos_theta_i > 0.f && cos_theta_o > 0.f;
+        //active &= cos_theta_i > 0.f && cos_theta_o > 0.f;
+
+        if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
+                     none_or<false>(sub_active)))
+            return 0.f;
+
+        // Calculate the half-direction vector
+        Vector3f H = normalize(wo + sub_si.wi);
+
+        /* Construct a microfacet distribution matching the
+           roughness values at the current surface position. */
+        MicrofacetDistribution distr(m_type, m_alpha_u->eval_1(si, active),
+                                     m_alpha_v->eval_1(si, active),
+                                     m_sample_visible);
+
+        // Evaluate the microfacet normal distribution
+        Float D = distr.eval(H);
+
+        sub_active &= neq(D, 0.f);
+
+        // Evaluate Smith's shadow-masking function
+        Float G = distr.G(sub_si.wi, wo, H);
+
+        // Evaluate the full microfacet model (except Fresnel)
+        UnpolarizedSpectrum result = D * G / (4.f * Frame3f::cos_theta(sub_si.wi));
+
+        // Evaluate the Fresnel factor
+        Complex<UnpolarizedSpectrum> eta_c(m_eta->eval(si, active),
+                                           m_k->eval(si, active));
+
+        Spectrum F;
+        if constexpr (is_polarized_v<Spectrum>) {
+            /* Due to lack of reciprocity in polarization-aware pBRDFs, they are
+               always evaluated w.r.t. the actual light propagation direction,
+               no matter the transport mode. In the following, 'wi_hat' is
+               toward the light source. */
+            Vector3f wi_hat = ctx.mode == TransportMode::Radiance ? wo : sub_si.wi,
+                     wo_hat = ctx.mode == TransportMode::Radiance ? sub_si.wi : wo;
+
+            // Mueller matrix for specular reflection.
+            F = mueller::specular_reflection(
+                UnpolarizedSpectrum(Frame3f::cos_theta(wi_hat)), eta_c);
+
+            /* Apply frame reflection, according to "Stellar Polarimetry" by
+               David Clarke, Appendix A.2 (A26) */
+            F = mueller::reverse(F);
+
+            /* The Stokes reference frame vector of this matrix lies in the
+               plane of reflection. */
+            Vector3f s_axis_in  = normalize(cross(H, -wi_hat)),
+                     p_axis_in  = normalize(cross(-wi_hat, s_axis_in)),
+                     s_axis_out = normalize(cross(H, wo_hat)),
+                     p_axis_out = normalize(cross(wo_hat, s_axis_out));
+
+            /* Rotate in/out reference vector of F s.t. it aligns with the
+               implicit Stokes bases of -wi_hat & wo_hat. */
+            F = mueller::rotate_mueller_basis(
+                F, -wi_hat, p_axis_in, mueller::stokes_basis(-wi_hat), wo_hat,
+                p_axis_out, mueller::stokes_basis(wo_hat));
+        } else {
+            if (likely(m_fresnel_shlick)) {
+                UnpolarizedSpectrum f0 = m_f0->eval(si, sub_active);
+                F                      = fresnel_conductor_schlick(
+                    UnpolarizedSpectrum(dot(sub_si.wi, H)), f0);
+            } else {
+                F = fresnel_conductor(UnpolarizedSpectrum(dot(sub_si.wi, H)),
+                                      eta_c);
+            }
+        }
+
+        /* If requested, include the specular reflectance component */
+        if (m_specular_reflectance)
+            result *= m_specular_reflectance->eval(si, active);
+        return (F * result) & sub_active;
+    }
+
+    Float pdf_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                     const SurfaceInteraction3f &sub_si, const Vector3f &wo,
+                     Mask active, Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, sub_active);
+
+        Float cos_theta_i = Frame3f::cos_theta(sub_si.wi),
+              cos_theta_o = Frame3f::cos_theta(wo);
+
+        // Calculate the half-direction vector
+        Vector3f m = normalize(wo + sub_si.wi);
+
+        /* Filter cases where the micro/macro-surface don't agree on the side.
+           This logic is evaluated in smith_g1() called as part of the eval()
+           and sample() methods and needs to be replicated in the probability
+           density computation as well. */
+        sub_active &= cos_theta_i > 0.f && cos_theta_o > 0.f &&
+                  dot(sub_si.wi, m) > 0.f && dot(wo, m) > 0.f;
+
+        if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
+                     none_or<false>(sub_active)))
+            return 0.f;
+
+        /* Construct a microfacet distribution matching the
+           roughness values at the current surface position. */
+        MicrofacetDistribution distr(m_type, m_alpha_u->eval_1(si, active),
+                                     m_alpha_v->eval_1(si, active),
+                                     m_sample_visible);
+
+        Float result;
+        if (likely(m_sample_visible))
+            result =
+                distr.eval(m) * distr.smith_g1(sub_si.wi, m) / (4.f * cos_theta_i);
+        else
+            result = distr.pdf(sub_si.wi, m) / (4.f * dot(wo, m));
+
+        return select(sub_active, result, 0.f);
+    }
+
+    std::pair<BSDFSample3f, Spectrum> sample_window(const BSDFContext &ctx,
+                                             const SurfaceInteraction3f &si,
+                                             const SurfaceInteraction3f &sub_si,
+                                             Float /* sample1 */,
+                                             const Point2f &sample2,
+                                             Mask active,
+                                             Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFSample, sub_active);
+
+        BSDFSample3f bs   = zero<BSDFSample3f>();
+        Float cos_theta_i = Frame3f::cos_theta(sub_si.wi);
+        sub_active &= cos_theta_i > 0.f;
+
+        if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
+                     none_or<false>(sub_active)))
+            return { bs, 0.f };
+
+        /* Construct a microfacet distribution matching the
+           roughness values at the current surface position. */
+        MicrofacetDistribution distr(m_type, m_alpha_u->eval_1(si, active),
+                                     m_alpha_v->eval_1(si, active),
+                                     m_sample_visible);
+
+        // Sample M, the microfacet normal
+        Normal3f m;
+        std::tie(m, bs.pdf) = distr.sample(sub_si.wi, sample2);
+
+        // Perfect specular reflection based on the microfacet normal
+        bs.wo                = reflect(sub_si.wi, m);
+        bs.eta               = 1.f;
+        bs.sampled_component = 0;
+        bs.sampled_type      = +BSDFFlags::GlossyReflection;
+
+        // Ensure that this is a valid sample
+        sub_active &= neq(bs.pdf, 0.f) && Frame3f::cos_theta(bs.wo) > 0.f;
+
+        UnpolarizedSpectrum weight;
+        if (likely(m_sample_visible))
+            weight = distr.smith_g1(bs.wo, m);
+        else
+            weight = distr.G(sub_si.wi, bs.wo, m) * dot(sub_si.wi, m) /
+                     (cos_theta_i * Frame3f::cos_theta(m));
+
+        // Jacobian of the half-direction mapping
+        bs.pdf /= 4.f * dot(bs.wo, m);
+
+        // Evaluate the Fresnel factor
+        Complex<UnpolarizedSpectrum> eta_c(m_eta->eval(si, active),
+                                           m_k->eval(si, active));
+
+        Spectrum F;
+        if constexpr (is_polarized_v<Spectrum>) {
+            /* Due to lack of reciprocity in polarization-aware pBRDFs, they are
+               always evaluated w.r.t. the actual light propagation direction,
+               no matter the transport mode. In the following, 'wi_hat' is
+               toward the light source. */
+            Vector3f wi_hat =
+                         ctx.mode == TransportMode::Radiance ? bs.wo : sub_si.wi,
+                     wo_hat =
+                         ctx.mode == TransportMode::Radiance ? sub_si.wi : bs.wo;
+
+            // Mueller matrix for specular reflection.
+            F = mueller::specular_reflection(
+                UnpolarizedSpectrum(Frame3f::cos_theta(wi_hat)), eta_c);
+
+            /* Apply frame reflection, according to "Stellar Polarimetry" by
+               David Clarke, Appendix A.2 (A26) */
+            F = mueller::reverse(F);
+
+            /* The Stokes reference frame vector of this matrix lies in the
+               plane of reflection. */
+            Vector3f s_axis_in  = normalize(cross(m, -wi_hat)),
+                     p_axis_in  = normalize(cross(-wi_hat, s_axis_in)),
+                     s_axis_out = normalize(cross(m, wo_hat)),
+                     p_axis_out = normalize(cross(wo_hat, s_axis_out));
+
+            /* Rotate in/out reference vector of F s.t. it aligns with the
+               implicit Stokes bases of -wi_hat & wo_hat. */
+            F = mueller::rotate_mueller_basis(
+                F, -wi_hat, p_axis_in, mueller::stokes_basis(-wi_hat), wo_hat,
+                p_axis_out, mueller::stokes_basis(wo_hat));
+        } else {
+            if (likely(m_fresnel_shlick)) {
+                UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                F                      = fresnel_conductor_schlick(
+                    UnpolarizedSpectrum(dot(sub_si.wi, m)), f0);
+            } else {
+                F = fresnel_conductor(UnpolarizedSpectrum(dot(sub_si.wi, m)),
+                                      eta_c);
+            }
+        }
+
+        /* If requested, include the specular reflectance component */
+        if (m_specular_reflectance)
+            weight *= m_specular_reflectance->eval(si, active);
+        return { bs, (F * weight) & sub_active };
     }
 
     void catch_irradiance(const BSDFContext &ctx,
@@ -804,6 +1357,7 @@ public:
             return;
         }
         m_catch_bitmap->m_bitmap->write(fs::path(m_irradiance_filename));
+        delete m_catch_bitmap;
     }
 
     void traverse(TraversalCallback *callback) override {
@@ -816,6 +1370,7 @@ public:
         callback->put_object("eta", m_eta.get());
         callback->put_object("k", m_k.get());
         callback->put_object("f0", m_f0.get());
+        callback->put_object("f90", m_f90.get());
         if (m_specular_reflectance)
             callback->put_object("specular_reflectance", m_specular_reflectance.get());
     }
@@ -854,14 +1409,20 @@ private:
     bool m_fresnel_shlick = false;
     // 'zero angle' reflentance value
     ref<Texture> m_f0;
+    ref<Texture> m_f90;
 
     // use ibl
     bool m_ibl = false;
+    bool m_ibl_multiview = false;
     struct {
         DynamicBuffer<Float> data;
         ScalarVector2i resolution;
     } m_brdflut;
     struct {
+        const int view_count = 4;
+        Vector<DynamicBuffer<Float>, 164> multiview_data_list;
+        Vector<ScalarVector2u, 164> multiview_reso_list;
+
         Vector<DynamicBuffer<Float>, 41> data_list;
         Vector<ScalarVector2u, 41> resolution_list;
         ref<const AnimatedTransform> world_transform;
@@ -874,6 +1435,9 @@ private:
     std::string m_irradiance_filename;
     float m_envmap_scale;
     CatchBitmap *m_catch_bitmap;
+
+    // forward rendering
+    bool m_forward = false;
 };
 
 MTS_IMPLEMENT_CLASS_VARIANT(RoughConductor, BSDF)

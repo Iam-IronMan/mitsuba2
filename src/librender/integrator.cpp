@@ -298,6 +298,27 @@ SamplingIntegrator<Float, Spectrum>::sample(const Scene * /* scene */,
     NotImplementedError("sample");
 }
 
+MTS_VARIANT std::pair<Spectrum, typename SamplingIntegrator<Float, Spectrum>::Mask>
+SamplingIntegrator<Float, Spectrum>::sample_window(
+        const Scene * /* scene */,Sampler * /* sampler */,
+        const RayDifferential3f & /* ray_main */,
+        const RayDifferential3f & /* ray_sub */,
+        const Medium * /* medium */,
+        Float * /* aovs */, Mask /* active */, Mask /* active_sub */) const {
+    NotImplementedError("sample_window");
+}
+
+MTS_VARIANT std::pair<Spectrum, typename SamplingIntegrator<Float, Spectrum>::Mask>
+SamplingIntegrator<Float, Spectrum>::sample_multiview(const Scene * /* scene */,
+                                            Sampler * /* sampler */,
+                                            const RayDifferential3f & /* ray */,
+                                            const int /* view_index */,
+                                            const Medium * /* medium */,
+                                            Float * /* aovs */,
+                                            Mask /* active */) const {
+    NotImplementedError("sample_multiview");
+}
+
 // -----------------------------------------------------------------------------
 
 MTS_VARIANT MonteCarloIntegrator<Float, Spectrum>::MonteCarloIntegrator(const Properties &props)

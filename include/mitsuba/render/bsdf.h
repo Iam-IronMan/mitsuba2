@@ -418,6 +418,30 @@ public:
 
     virtual void save_irradiance() const;
 
+    virtual Spectrum eval_window(const BSDFContext &ctx,
+                                 const SurfaceInteraction3f &si,
+                                 const SurfaceInteraction3f &sub_si,
+                                 const Vector3f &wo,
+                                 Mask active = true, Mask sub_active = true) const;
+
+    virtual Float pdf_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                      const SurfaceInteraction3f &sub_si,
+                      const Vector3f &wo, Mask active = true, Mask sub_active = true) const;
+
+    virtual std::pair<BSDFSample3f, Spectrum> 
+        sample_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                  const SurfaceInteraction3f &sub_si, Float sample1,
+                  const Point2f &sample2, Mask active = true, Mask sub_active = true) const {
+        BSDFSample3f bs = zero<BSDFSample3f>();
+        Spectrum res(0.f);
+        return { bs, res };
+    };
+
+    virtual Spectrum eval_multiview(const BSDFContext &ctx,
+                          const SurfaceInteraction3f &si, const Vector3f &wo,
+                          const int view_index,
+                          Mask active = true) const;
+
     // -----------------------------------------------------------------------
     //! @{ \name BSDF property accessors (components, flags, etc)
     // -----------------------------------------------------------------------
@@ -536,6 +560,10 @@ ENOKI_CALL_SUPPORT_TEMPLATE_BEGIN(mitsuba::BSDF)
     ENOKI_CALL_SUPPORT_METHOD(catch_irradiance)
     ENOKI_CALL_SUPPORT_METHOD(acc_irradiance)
     ENOKI_CALL_SUPPORT_METHOD(save_irradiance)
+    ENOKI_CALL_SUPPORT_METHOD(eval_window)
+    ENOKI_CALL_SUPPORT_METHOD(pdf_window)
+    ENOKI_CALL_SUPPORT_METHOD(sample_window)
+    ENOKI_CALL_SUPPORT_METHOD(eval_multiview)
     ENOKI_CALL_SUPPORT_GETTER(flags, m_flags)
 
     auto needs_differentials() const {

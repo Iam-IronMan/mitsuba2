@@ -25,6 +25,37 @@ MTS_VARIANT void BSDF<Float, Spectrum>::acc_irradiance(const float factor) const
 
 MTS_VARIANT void BSDF<Float, Spectrum>::save_irradiance() const {}
 
+MTS_VARIANT Spectrum BSDF<Float, Spectrum>::eval_window(
+    const BSDFContext &ctx, const SurfaceInteraction3f &si,
+    const SurfaceInteraction3f &sub_si, const Vector3f &wo, Mask active,
+    Mask sub_active) const {
+    Spectrum res(0.f);
+    return res;
+}
+
+MTS_VARIANT Float BSDF<Float, Spectrum>::pdf_window(
+    const BSDFContext &ctx, const SurfaceInteraction3f &si,
+    const SurfaceInteraction3f &sub_si, const Vector3f &wo, Mask active,
+    Mask sub_active) const {
+    Float res(0.f);
+    return res;
+}
+
+//MTS_VARIANT std::pair<BSDF<Float, Spectrum>::BSDFSample3f, Spectrum> 
+//    BSDF<Float, Spectrum>::sample_window(
+//    const BSDFContext &ctx, const SurfaceInteraction3f &si,
+//    const SurfaceInteraction3f &sub_si, Float sample1, const Point2f &sample2,
+//    Mask active) const {}
+
+MTS_VARIANT Spectrum BSDF<Float, Spectrum>::eval_multiview(const BSDFContext& ctx,
+    const SurfaceInteraction3f& si,
+    const Vector3f& wo, 
+    const int view_index,
+    Mask active) const {
+    Spectrum res(0.f);
+    return res;
+}
+
 MTS_VARIANT std::string BSDF<Float, Spectrum>::id() const { return m_id; }
 
 template <typename Index>

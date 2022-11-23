@@ -213,6 +213,248 @@ public:
        return { result, valid_ray };
     }
 
+    std::pair<Spectrum, Mask> sample_window(
+        const Scene *scene, Sampler *sampler, const RayDifferential3f &ray_main_,
+        const RayDifferential3f& ray_sub_, const Medium * /* medium */,
+        Float * /* aovs */, Mask active_main = true, Mask active_sub = true) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::SamplingIntegratorSample, active_sub);
+
+        RayDifferential3f ray_main = ray_main_;
+        RayDifferential3f ray_sub  = ray_sub_;
+        // ---------------------- First intersection ----------------------
+
+        SurfaceInteraction3f si_main = scene->ray_intersect(ray_main, active_main);
+        Mask valid_ray_main          = si_main.is_valid();
+        active_main &= si_main.is_valid();
+        BSDFPtr bsdf_main = si_main.bsdf(ray_main);
+        Mask active_e_main = active_main && has_flag(bsdf_main->flags(), BSDFFlags::Smooth);
+
+        // Tracks radiance scaling due to index of refraction changes
+        Float eta(1.f);
+
+        // MIS weight for intersected emitters (set by prev. iteration)
+        Float emission_weight(1.f);
+
+        Spectrum throughput(1.f), result(0.f);
+
+        // ---------------------- First intersection ----------------------
+        SurfaceInteraction3f si = scene->ray_intersect(ray_sub, active_sub);
+        Mask valid_ray_sub          = si.is_valid();
+        EmitterPtr emitter      = si.emitter(scene);
+
+        active_sub &= active_main;
+        valid_ray_sub &= valid_ray_main;
+
+        for (int depth = 1;; ++depth) {
+
+            // ---------------- Intersection with emitters ----------------
+
+            if (any_or<true>(neq(emitter, nullptr)))
+                result[active_sub] +=
+                    emission_weight * throughput * emitter->eval(si, active_sub);
+
+            active_sub &= si.is_valid();
+
+            /* Russian roulette: try to keep path weights equal to one,
+               while accounting for the solid angle compression at refractive
+               index boundaries. Stop with at least some probability to avoid
+               getting stuck (e.g. due to total internal reflection) */
+            if (depth > m_rr_depth) {
+                Float q = min(hmax(depolarize(throughput)) * sqr(eta), .95f);
+                active_sub &= sampler->next_1d(active_sub) < q;
+                throughput *= rcp(q);
+            }
+
+            // Stop if we've exceeded the number of requested bounces, or
+            // if there are no more active lanes. Only do this latter check
+            // in GPU mode when the number of requested bounces is infinite
+            // since it causes a costly synchronization.
+            if ((uint32_t) depth >= (uint32_t) m_max_depth ||
+                ((!is_cuda_array_v<Float> || m_max_depth < 0) && none(active_sub)))
+                break;
+
+            // --------------------- Emitter sampling ---------------------
+
+            BSDFContext ctx;
+            BSDFPtr bsdf = si.bsdf(ray_sub);
+            Mask active_e =
+                active_sub && has_flag(bsdf->flags(), BSDFFlags::Smooth);
+
+            active_e &= active_e_main;
+            if (likely(any_or<true>(active_e))) {
+                auto [ds, emitter_val] = scene->sample_emitter_direction(
+                    si, sampler->next_2d(active_e), true, active_e);
+                active_e &= neq(ds.pdf, 0.f);
+
+                // Query the BSDF for that emitter-sampled direction
+                Vector3f wo       = si.to_local(ds.d);
+                Spectrum bsdf_val = bsdf->eval_window(ctx, si_main, si, wo, active_e_main, active_e);
+                bsdf_val          = si.to_world_mueller(bsdf_val, -wo, si.wi);
+
+                // Determine density of sampling that same direction using BSDF
+                // sampling
+                Float bsdf_pdf = bsdf->pdf_window(ctx, si_main, si, wo, active_e_main, active_e);
+
+                Float mis = select(ds.delta, 1.f, mis_weight(ds.pdf, bsdf_pdf));
+
+                result[active_e] += mis * throughput * bsdf_val * emitter_val;
+            }
+
+            // ----------------------- BSDF sampling ----------------------
+
+            // Sample BSDF * cos(theta)
+            auto [bs, bsdf_val] =
+                bsdf->sample_window(ctx, si_main, si, sampler->next_1d(active_sub),
+                             sampler->next_2d(active_sub), active_main, active_sub);
+            bsdf_val = si.to_world_mueller(bsdf_val, -bs.wo, si.wi);
+
+            throughput = throughput * bsdf_val;
+            active_sub &= any(neq(depolarize(throughput), 0.f));
+            if (none_or<false>(active_sub))
+                break;
+
+            eta *= bs.eta;
+
+            // Intersect the BSDF ray against the scene geometry
+            ray_sub                      = si.spawn_ray(si.to_world(bs.wo));
+            SurfaceInteraction3f si_bsdf = scene->ray_intersect(ray_sub, active_sub);
+
+            /* Determine probability of having sampled that same
+               direction using emitter sampling. */
+            emitter = si_bsdf.emitter(scene, active_sub);
+            DirectionSample3f ds(si_bsdf, si);
+            ds.object = emitter;
+
+            if (any_or<true>(neq(emitter, nullptr))) {
+                Float emitter_pdf =
+                    select(neq(emitter, nullptr) &&
+                               !has_flag(bs.sampled_type, BSDFFlags::Delta),
+                           scene->pdf_emitter_direction(si, ds), 0.f);
+
+                emission_weight = mis_weight(bs.pdf, emitter_pdf);
+            }
+
+            si = std::move(si_bsdf);
+        }
+
+        return { result, valid_ray_sub };
+        //int subray_cnt = ray_w.size();
+        //result_list.resize(subray_cnt);
+        //for (int i = 0; i < subray_cnt; ++i) {
+        //    // Tracks radiance scaling due to index of refraction changes
+        //    Float eta(1.f);
+
+        //    // MIS weight for intersected emitters (set by prev. iteration)
+        //    Float emission_weight(1.f);
+
+        //    Spectrum throughput(1.f);
+
+        //    Mask active_t = true;
+        //    RayDifferential3f ray = ray_w[i];
+
+        //    SurfaceInteraction3f si = scene->ray_intersect(ray, active_t);
+        //    EmitterPtr emitter = si.emitter(scene);
+
+        //    valid_ray &= si.is_valid();
+        //    active_t &= active;
+
+        //    result_list[i] = Spectrum(0.f);
+        //    for (int depth = 1;; ++depth) {
+
+        //        // ---------------- Intersection with emitters ----------------
+
+        //        if (any_or<true>(neq(emitter, nullptr)))
+        //            result_list[i][active_t] +=
+        //                emission_weight * throughput * emitter->eval(si, active_t);
+
+        //        active_t &= si.is_valid();
+
+        //        /* Russian roulette: try to keep path weights equal to one,
+        //           while accounting for the solid angle compression at refractive
+        //           index boundaries. Stop with at least some probability to avoid
+        //           getting stuck (e.g. due to total internal reflection) */
+        //        if (depth > m_rr_depth) {
+        //            Float q = min(hmax(depolarize(throughput)) * sqr(eta), .95f);
+        //            active_t &= sampler->next_1d(active_t) < q;
+        //            throughput *= rcp(q);
+        //        }
+
+        //        // Stop if we've exceeded the number of requested bounces, or
+        //        // if there are no more active lanes. Only do this latter check
+        //        // in GPU mode when the number of requested bounces is infinite
+        //        // since it causes a costly synchronization.
+        //        if ((uint32_t) depth >= (uint32_t) m_max_depth ||
+        //            ((!is_cuda_array_v<Float> || m_max_depth < 0) && none(active_t)))
+        //            break;
+
+        //        // --------------------- Emitter sampling ---------------------
+
+        //        BSDFContext ctx;
+        //        BSDFPtr bsdf = si.bsdf(ray);
+        //        Mask active_e =
+        //            active_t && has_flag(bsdf->flags(), BSDFFlags::Smooth);
+
+        //        if (likely(any_or<true>(active_e))) {
+        //            auto [ds, emitter_val] = scene->sample_emitter_direction(
+        //                si, sampler->next_2d(active_e), true, active_e);
+        //            active_e &= neq(ds.pdf, 0.f);
+
+        //            // Query the BSDF for that emitter-sampled direction
+        //            Vector3f wo       = si.to_local(ds.d);
+        //            Spectrum bsdf_val = bsdf->eval_window(ctx, si_m, si, wo, active_e_m, active_e);
+        //            bsdf_val = si.to_world_mueller(bsdf_val, -wo, si.wi);
+        //            result_list[i][active_e] += throughput * bsdf_val * emitter_val;
+        //            break;
+
+        //            // Determine density of sampling that same direction using BSDF
+        //            // sampling
+        //            Float bsdf_pdf = bsdf->pdf_window(ctx, si_m, si, wo, active_e_m, active_e);
+
+        //            Float mis = select(ds.delta, 1.f, mis_weight(ds.pdf, bsdf_pdf));
+        //            result_list[i][active_e] += mis * throughput * bsdf_val * emitter_val;
+        //        }
+
+        //        // ----------------------- BSDF sampling ----------------------
+
+        //        // Sample BSDF * cos(theta)
+        //        auto [bs, bsdf_val] =
+        //            bsdf->sample_window(ctx, si_m, si, sampler->next_1d(active_t),
+        //                         sampler->next_2d(active_t), active_e_m, active_t);
+        //        bsdf_val = si.to_world_mueller(bsdf_val, -bs.wo, si.wi);
+
+        //        throughput = throughput * bsdf_val;
+        //        active_t &= any(neq(depolarize(throughput), 0.f));
+        //        if (none_or<false>(active_t))
+        //            break;
+
+        //        eta *= bs.eta;
+
+        //        // Intersect the BSDF ray against the scene geometry
+        //        ray                          = si.spawn_ray(si.to_world(bs.wo));
+        //        SurfaceInteraction3f si_bsdf = scene->ray_intersect(ray, active_t);
+
+        //        /* Determine probability of having sampled that same
+        //           direction using emitter sampling. */
+        //        emitter = si_bsdf.emitter(scene, active_t);
+        //        DirectionSample3f ds(si_bsdf, si);
+        //        ds.object = emitter;
+
+        //        if (any_or<true>(neq(emitter, nullptr))) {
+        //            Float emitter_pdf =
+        //                select(neq(emitter, nullptr) &&
+        //                           !has_flag(bs.sampled_type, BSDFFlags::Delta),
+        //                       scene->pdf_emitter_direction(si, ds), 0.f);
+
+        //            emission_weight = mis_weight(bs.pdf, emitter_pdf);
+        //        }
+
+        //        si = std::move(si_bsdf);
+        //    }
+
+        //}
+
+        //return { result_list, valid_ray };
+    }
     //! @}
     // =============================================================
 

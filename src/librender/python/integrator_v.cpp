@@ -75,6 +75,30 @@ void bind_integrator_sample(Class &integrator) {
         },
         "scene"_a, "sampler"_a, "ray"_a, "medium"_a = nullptr, "active"_a = true,
         D(SamplingIntegrator, sample));
+
+    integrator.def(
+        "sample_window",
+        [](const SamplingIntegrator *integrator, const Scene *scene, Sampler *sampler,
+           const RayDifferential3f &ray_main, 
+           const RayDifferential3f& ray_sub,
+           const Medium *medium, Mask active, Mask active_sub) {
+            py::gil_scoped_release release;
+            std::vector<Float> aovs(integrator->aov_names().size(), 0.f);
+            auto [spec, mask] = integrator->sample_window(scene, sampler, ray_main, ray_sub, medium, aovs.data(), active, active_sub);
+            return std::make_tuple(spec, mask, aovs);
+        },
+        "scene"_a, "sampler"_a, "ray_main"_a, "ray_sub"_a, "medium"_a = nullptr, "active"_a = true, "active_sub"_a = true);
+
+    integrator.def(
+        "sample_multiview",
+        [](const SamplingIntegrator *integrator, const Scene *scene, Sampler *sampler,
+           const RayDifferential3f &ray, const int view_index, const Medium *medium, Mask active) {
+            py::gil_scoped_release release;
+            std::vector<Float> aovs(integrator->aov_names().size(), 0.f);
+            auto [spec, mask] = integrator->sample_multiview(scene, sampler, ray, view_index, medium, aovs.data(), active);
+            return std::make_tuple(spec, mask, aovs);
+        },
+        "scene"_a, "sampler"_a, "ray"_a, "view_index"_a, "medium"_a = nullptr, "active"_a = true);
 }
 
 template <typename FloatP, typename SpectrumP, typename Class,

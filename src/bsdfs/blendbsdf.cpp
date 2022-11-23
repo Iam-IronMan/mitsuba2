@@ -159,6 +159,109 @@ public:
                m_nested_bsdf[1]->pdf(ctx, si, wo, active) * weight;
     }
 
+    Spectrum eval_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                  const SurfaceInteraction3f &sub_si,
+                  const Vector3f &wo, Mask active, Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, sub_active);
+
+        Float weight = eval_weight(sub_si, sub_active);
+        if (unlikely(ctx.component != (uint32_t) -1)) {
+            bool sample_first = ctx.component < m_nested_bsdf[0]->component_count();
+            BSDFContext ctx2(ctx);
+            if (!sample_first)
+                ctx2.component -= (uint32_t) m_nested_bsdf[0]->component_count();
+            else
+                weight = 1.f - weight;
+            return weight * m_nested_bsdf[sample_first ? 0 : 1]->eval_window(ctx2, si, sub_si, wo, active, sub_active);
+        }
+
+        return m_nested_bsdf[0]->eval_window(ctx, si, sub_si, wo, active, sub_active) * (1 - weight) +
+               m_nested_bsdf[1]->eval_window(ctx, si, sub_si, wo, active, sub_active) * weight;
+    }
+
+    Float pdf_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+              const SurfaceInteraction3f &sub_si,
+              const Vector3f &wo, Mask active, Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, sub_active);
+
+        if (unlikely(ctx.component != (uint32_t) -1)) {
+            bool sample_first = ctx.component < m_nested_bsdf[0]->component_count();
+            BSDFContext ctx2(ctx);
+            if (!sample_first)
+                ctx2.component -= (uint32_t) m_nested_bsdf[0]->component_count();
+            return m_nested_bsdf[sample_first ? 0 : 1]->pdf_window(ctx2, si, sub_si, wo, active, sub_active);
+        }
+
+        Float weight = eval_weight(sub_si, sub_active);
+        return m_nested_bsdf[0]->pdf_window(ctx, si, sub_si, wo, active, sub_active) * (1 - weight) +
+               m_nested_bsdf[1]->pdf_window(ctx, si, sub_si, wo, active, sub_active) * weight;
+    }
+
+    std::pair<BSDFSample3f, Spectrum> sample_window(const BSDFContext &ctx,
+                                             const SurfaceInteraction3f &si,
+                                             const SurfaceInteraction3f &sub_si,
+                                             Float sample1,
+                                             const Point2f &sample2,
+                                             Mask active,
+                                             Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFSample, sub_active);
+
+        Float weight = eval_weight(sub_si, sub_active);
+        if (unlikely(ctx.component != (uint32_t) -1)) {
+            bool sample_first = ctx.component < m_nested_bsdf[0]->component_count();
+            BSDFContext ctx2(ctx);
+            if (!sample_first)
+                ctx2.component -= (uint32_t) m_nested_bsdf[0]->component_count();
+            else
+                weight = 1.f - weight;
+            auto [bs, result] = m_nested_bsdf[sample_first ? 0 : 1]->sample_window(ctx2, si, sub_si, sample1, sample2, active, sub_active);
+            result *= weight;
+            return { bs, result };
+        }
+
+        BSDFSample3f bs = zero<BSDFSample3f>();
+        Spectrum result(0.f);
+
+        Mask m0 = sub_active && sample1 > weight,
+             m1 = sub_active && sample1 <= weight;
+
+        if (any_or<true>(m0)) {
+            auto [bs0, result0] = m_nested_bsdf[0]->sample_window(
+                ctx, si, sub_si, (sample1 - weight) / (1 - weight), sample2, active, m0);
+            masked(bs, m0) = bs0;
+            masked(result, m0) = result0;
+        }
+
+        if (any_or<true>(m1)) {
+            auto [bs1, result1] = m_nested_bsdf[1]->sample_window(
+                ctx, si, sub_si, sample1 / weight, sample2, active, m1);
+            masked(bs, m1) = bs1;
+            masked(result, m1) = result1;
+        }
+
+        return { bs, result };
+    }
+
+    Spectrum eval_multiview(const BSDFContext &ctx,
+                            const SurfaceInteraction3f &si, const Vector3f &wo,
+                            const int view_index, Mask active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
+
+        Float weight = eval_weight(si, active);
+        if (unlikely(ctx.component != (uint32_t) -1)) {
+            bool sample_first = ctx.component < m_nested_bsdf[0]->component_count();
+            BSDFContext ctx2(ctx);
+            if (!sample_first)
+                ctx2.component -= (uint32_t) m_nested_bsdf[0]->component_count();
+            else
+                weight = 1.f - weight;
+            return weight * m_nested_bsdf[sample_first ? 0 : 1]->eval_multiview(ctx2, si, wo, view_index, active);
+        }
+
+        return m_nested_bsdf[0]->eval_multiview(ctx, si, wo, view_index, active) * (1 - weight) +
+               m_nested_bsdf[1]->eval_multiview(ctx, si, wo, view_index, active) * weight;
+    }
+
     MTS_INLINE Float eval_weight(const SurfaceInteraction3f &si, const Mask &active) const {
         return clamp(m_weight->eval_1(si, active), 0.f, 1.f);
     }

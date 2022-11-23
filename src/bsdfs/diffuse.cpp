@@ -211,8 +211,16 @@ public:
             m_catch_bitmap = new CatchBitmap(m_irradiance_width, m_irradiance_height);
         }
 
-        if (props.has_property("irradiance")) {
-            m_irradiance   = props.texture<Texture>("irradiance");
+        m_multiview = props.bool_("multiview", false);
+        if (m_multiview) {
+            m_irradiance_list[0] = props.texture<Texture>("irradiance0");
+            m_irradiance_list[1] = props.texture<Texture>("irradiance1");
+            m_irradiance_list[2] = props.texture<Texture>("irradiance2");
+            m_irradiance_list[3] = props.texture<Texture>("irradiance3");
+        } else {
+            if (props.has_property("irradiance")) {
+                m_irradiance = props.texture<Texture>("irradiance");
+            }
         }
         m_flags = BSDFFlags::DiffuseReflection | BSDFFlags::FrontSide;
         m_components.push_back(m_flags);
@@ -282,6 +290,109 @@ public:
 
         return select(cos_theta_i > 0.f && cos_theta_o > 0.f, pdf, 0.f);
     }
+
+    
+    Spectrum eval_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                  const SurfaceInteraction3f &sub_si,
+                  const Vector3f &wo, Mask active, Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, sub_active);
+
+        if (!ctx.is_enabled(BSDFFlags::DiffuseReflection))
+            return 0.f;
+
+        if (m_irradiance != nullptr) {
+            UnpolarizedSpectrum value = m_irradiance->eval(sub_si, sub_active) *
+                                        m_reflectance->eval(sub_si, sub_active);
+            return value;
+        }
+
+        Float cos_theta_i = Frame3f::cos_theta(sub_si.wi),
+              cos_theta_o = Frame3f::cos_theta(wo);
+
+        sub_active &= cos_theta_i > 0.f && cos_theta_o > 0.f;
+
+        UnpolarizedSpectrum value =
+            m_reflectance->eval(sub_si, sub_active) * math::InvPi<Float> * cos_theta_o;
+
+        return select(sub_active, unpolarized<Spectrum>(value), 0.f);
+    }
+
+    Float pdf_window(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+              const SurfaceInteraction3f& sub_si, const Vector3f &wo,
+                     Mask active, Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, sub_active);
+
+        if (!ctx.is_enabled(BSDFFlags::DiffuseReflection))
+            return 0.f;
+
+        Float cos_theta_i = Frame3f::cos_theta(sub_si.wi),
+              cos_theta_o = Frame3f::cos_theta(wo);
+
+        Float pdf = warp::square_to_cosine_hemisphere_pdf(wo);
+
+        return select(cos_theta_i > 0.f && cos_theta_o > 0.f, pdf, 0.f);
+    }
+
+    std::pair<BSDFSample3f, Spectrum> sample_window(const BSDFContext &ctx,
+                                             const SurfaceInteraction3f &si,
+                                             const SurfaceInteraction3f &sub_si,
+                                             Float /* sample1 */,
+                                             const Point2f &sample2,
+                                             Mask active,
+                                             Mask sub_active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFSample, sub_active);
+
+        Float cos_theta_i = Frame3f::cos_theta(sub_si.wi);
+        BSDFSample3f bs = zero<BSDFSample3f>();
+
+        sub_active &= cos_theta_i > 0.f;
+        if (unlikely(none_or<false>(sub_active) ||
+                     !ctx.is_enabled(BSDFFlags::DiffuseReflection)))
+            return { bs, 0.f };
+
+        bs.wo = warp::square_to_cosine_hemisphere(sample2);
+        bs.pdf = warp::square_to_cosine_hemisphere_pdf(bs.wo);
+        bs.eta = 1.f;
+        bs.sampled_type = +BSDFFlags::DiffuseReflection;
+        bs.sampled_component = 0;
+
+        UnpolarizedSpectrum value = m_reflectance->eval(sub_si, sub_active);
+
+        return { bs, select(sub_active && bs.pdf > 0.f, unpolarized<Spectrum>(value), 0.f) };
+    }
+
+    Spectrum eval_multiview(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                  const Vector3f &wo, 
+                  const int view_index_, 
+                  Mask active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
+
+        if (!ctx.is_enabled(BSDFFlags::DiffuseReflection))
+            return 0.f;
+        
+        if (m_multiview) {
+            if (view_index_ < 0) {
+                return 0.f;
+            }
+            int view_index = view_index_;
+            view_index %= m_irradiance_list.size();
+            UnpolarizedSpectrum value = m_irradiance_list[view_index]->eval(si, active) * m_reflectance->eval(si, active);
+            //return select(active, unpolarized<Spectrum>(value), 0.f);
+            return value;
+        }
+
+        Float cos_theta_i = Frame3f::cos_theta(si.wi),
+              cos_theta_o = Frame3f::cos_theta(wo);
+
+        active &= cos_theta_i > 0.f && cos_theta_o > 0.f;
+
+        UnpolarizedSpectrum value =
+            m_reflectance->eval(si, active) * math::InvPi<Float> * cos_theta_o;
+
+        return select(active, unpolarized<Spectrum>(value), 0.f);
+    }
+
+
 
     void catch_irradiance(const BSDFContext &ctx,
                                                  const SurfaceInteraction3f &si,
@@ -373,12 +484,15 @@ private:
     ref<Texture> m_irradiance;
 
     //ref<Bitmap> m_catch_irradiance;
-
+    
     bool m_catch_irradiance = false;
     int m_irradiance_width, m_irradiance_height;
     std::string m_irradiance_filename;
 
     CatchBitmap* m_catch_bitmap;
+
+    bool m_multiview = false;
+    std::array<ref<Texture>, 4> m_irradiance_list;
     
 };
 
