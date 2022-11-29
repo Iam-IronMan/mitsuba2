@@ -13,6 +13,8 @@
 #include <mitsuba/core/rfilter.h>
 #include <mitsuba/core/plugin.h>
 
+#define PREFILTERED_NEQV
+#undef PREFILTERED_NEQV
 NAMESPACE_BEGIN(mitsuba)
 
 /**!
@@ -366,10 +368,10 @@ public:
                     std::string name = (i == 40 ? "env1000.exr" : ("env0" + tag + ".exr"));
                     fs::path file_path = fs->resolve(pre_envmap_root + name);
                     ref<Bitmap> bitmap = new Bitmap(file_path);
-#ifdef PREFILTERED
-                    bitmap = bitmap->convert(Bitmap::PixelFormat::RGBA, struct_type_v<ScalarFloat>, false);
+#ifdef PREFILTERED_NEQV
+                    bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
                     m_prefiltered_envmap.resolution_list[i] = bitmap->size();
-                    m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 4);
+                    m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 3);
 #else
                     bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
                     m_prefiltered_envmap.resolution_list[i] = bitmap->size();
@@ -482,7 +484,9 @@ public:
         } else {
             if (likely(m_fresnel_shlick)) {
                 UnpolarizedSpectrum f0 = m_f0->eval(si, active);
-                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0);
+                UnpolarizedSpectrum f90 = m_f90->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0, f90);
+                //F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0);
             } else {
                 F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, m)), eta_c);
             }
@@ -503,36 +507,7 @@ public:
                          Mask active, int32_t bottom, int32_t up) const {
         //auto& data = gather<DynamicBuffer<Float>>(m_prefiltered_envmap.data_list, lod, active);
         UnpolarizedSpectrum result(0.f);
-#ifdef PREFILTERED
-        for (int i = 0; i < 11; ++i) {
-            auto &resolution = m_prefiltered_envmap.resolution_list[i];
-            auto &data      = m_prefiltered_envmap.data_list[i];
-            //Point2f uv_t = uv * Vector2f(resolution);
-            //Point2u pos = min(Point2u(uv_t + 0.5), resolution - 1u);
-            Point2f uv_t = uv * Vector2f(resolution - 1u);
-            Point2u pos  = min(Point2u(uv_t), resolution - 2u);
 
-
-            Point2f w1 = uv_t - Point2f(pos), w0 = 1.f - w1;
-
-            const uint32_t width = resolution.x();
-            UInt32 index         = pos.x() + pos.y() * width;
-            Mask active_e = active;
-            active_e &= eq(lod, i);
-            Vector4f v00 = gather<Vector4f>(data, index, active_e),
-                     v10 = gather<Vector4f>(data, index + 1, active_e),
-                     v01 = gather<Vector4f>(data, index + width, active_e),
-                     v11 = gather<Vector4f>(data, index + width + 1, active_e);
-
-            ENOKI_MARK_USED(wavelengths);
-            Vector4f v0 = fmadd(w0.x(), v00, w1.x() * v10),
-                     v1 = fmadd(w0.x(), v01, w1.x() * v11),
-                     v  = fmadd(w0.y(), v0, w1.y() * v1);
-
-             result += head<3>(v);
-        }
-        result *= m_prefiltered_envmap.scale;
-#else
         using Int4       = Array<Int32, 4>;
         using Int24      = Array<Int4, 2>;
         for(int i = bottom; i <= up; ++i) {
@@ -562,6 +537,9 @@ public:
                      v = fmadd(w0.y(), v0, w1.y() * v1);
             result += v;
         }
+
+#ifdef PREFILTERED_NEQV
+        result *= m_prefiltered_envmap.scale;
 #endif
         return result;
     }
@@ -648,7 +626,7 @@ public:
             //Normal3f normal = si.to_world(Normal3f(zero, zero, one));
             //Vector3f wi = si.to_world(si.wi);
             //Vector3f r = reflect(wi, normal);
-#ifdef PREFILTERED
+#ifdef PREFILTERED_NEQV
             Vector3f r = si.to_world(reflect(si.wi));
             r = m_prefiltered_envmap.world_transform->eval(si.time, active).transform_affine(r);
             
@@ -784,7 +762,9 @@ public:
         } else {
             if (likely(m_fresnel_shlick)) {
                 UnpolarizedSpectrum f0 = m_f0->eval(si, active);
-                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
+                UnpolarizedSpectrum f90 = m_f90->eval(si, active);
+                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0, f90);
+                //F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
             } else {
                 F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
             }
@@ -818,7 +798,7 @@ public:
             //Normal3f normal = si.to_world(Normal3f(zero, zero, one));
             //Vector3f wi = si.to_world(si.wi);
             //Vector3f r = reflect(wi, normal);
-#ifdef PREFILTERED
+#ifdef PREFILTERED_NEQV
             Vector3f r = si.to_world(reflect(si.wi));
             r = m_prefiltered_envmap.world_transform->eval(si.time, active).transform_affine(r);
             
@@ -1020,7 +1000,7 @@ public:
             // Normal3f normal = si.to_world(Normal3f(zero, zero, one));
             // Vector3f wi = si.to_world(si.wi);
             // Vector3f r = reflect(wi, normal);
-#ifdef PREFILTERED
+#ifdef PREFILTERED_NEQV
             Vector3f r = si.to_world(reflect(si.wi));
             r = m_prefiltered_envmap.world_transform->eval(si.time, active)
                     .transform_affine(r);
