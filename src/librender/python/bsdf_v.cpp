@@ -18,6 +18,13 @@ MTS_PY_EXPORT(BSDFSample) {
         .def_readwrite("sampled_type", &BSDFSample3f::sampled_type, D(BSDFSample3, sampled_type))
         .def_readwrite("sampled_component", &BSDFSample3f::sampled_component, D(BSDFSample3, sampled_component))
         .def_repr(BSDFSample3f);
+
+    py::class_<BSDFAttrib3f>(m, "BSDFAttrib")
+        .def(py::init<>())
+        .def(py::init<const BSDFAttrib3f &>(), "ba"_a)
+        .def_readwrite("cos_i", &BSDFAttrib3f::cos_i)
+        .def_readwrite("light_value", &BSDFAttrib3f::light_value)
+        .def_repr(BSDFAttrib3f);
 }
 
 /// Trampoline for derived types implemented in Python
@@ -126,6 +133,13 @@ MTS_PY_EXPORT(BSDF) {
             "save_irradiance_vec",
             vectorize([](const BSDFPtr &ptr) { ptr->save_irradiance(); }),
             "ptr"_a);
+
+        bsdf.def_static(
+            "catch_bsdf_attrib_vec",
+            vectorize([](const BSDFPtr &ptr, const BSDFContext &ctx,
+                        const SurfaceInteraction3f &si, Mask active) { 
+                    return ptr->catch_bsdf_attrib(ctx, si, active); }),
+            "ptr"_a, "ctx"_a, "si"_a, "active"_a = true);
     }
 
     MTS_PY_REGISTER_OBJECT("register_bsdf", BSDF)

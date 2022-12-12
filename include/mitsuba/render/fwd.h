@@ -40,6 +40,7 @@ template <typename Float, typename Spectrum> struct SurfaceInteraction;
 template <typename Float, typename Spectrum> struct MediumInteraction;
 template <typename Float, typename Spectrum> struct PreliminaryIntersection;
 template <typename Float, typename Spectrum> struct BSDFSample3;
+template <typename Float, typename Spectrum> struct BSDFAttrib3;
 template <typename Float, typename Spectrum> struct PhaseFunctionContext;
 
 
@@ -63,6 +64,7 @@ template <typename Float_, typename Spectrum_> struct RenderAliases {
     using MediumInteraction3f       = MediumInteraction<Float, Spectrum>;
     using PreliminaryIntersection3f = PreliminaryIntersection<Float, Spectrum>;
     using BSDFSample3f              = BSDFSample3<Float, Spectrum>;
+    using BSDFAttrib3f              = BSDFAttrib3<Float, Spectrum>;
     using PhaseFunctionContext      = mitsuba::PhaseFunctionContext<Float, Spectrum>;
 
     /// Strip away any masking-related wrappers from 'Float' and 'Spectrum'
@@ -124,6 +126,7 @@ template <typename Float_, typename Spectrum_> struct RenderAliases {
     using MediumInteraction3f       = typename RenderAliases::MediumInteraction3f;                 \
     using PreliminaryIntersection3f = typename RenderAliases::PreliminaryIntersection3f;           \
     using BSDFSample3f              = typename RenderAliases::BSDFSample3f;                        \
+    using BSDFAttrib3f              = typename RenderAliases::BSDFAttrib3f;                        \
     ENOKI_USING_TYPES(MTS_IMPORT_TYPES_HELPER(__VA_ARGS__))
 
 #define MTS_IMPORT_OBJECT_TYPES()                                                                  \

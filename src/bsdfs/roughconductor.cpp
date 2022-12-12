@@ -12,9 +12,12 @@
 #include <array>
 #include <mitsuba/core/rfilter.h>
 #include <mitsuba/core/plugin.h>
+#include <fstream>
+#include <sstream>
+#include <exception> 
 
-#define PREFILTERED_NEQV
-#undef PREFILTERED_NEQV
+//#define PREFILTERED_NEQV
+
 NAMESPACE_BEGIN(mitsuba)
 
 /**!
@@ -312,11 +315,9 @@ public:
             m_specular_reflectance = props.texture<Texture>("specular_reflectance", 1.f);
 
         m_fresnel_shlick = props.bool_("fresnel_shlick", false);
-        if (props.has_property("f0")) {
-            m_f0 = props.texture<Texture>("f0", 0.f);
-        }
-
-        if (props.has_property("f90")) {
+        
+        if (m_fresnel_shlick) {
+            m_f0  = props.texture<Texture>("f0", 0.1f);
             m_f90 = props.texture<Texture>("f90", 1.0f);
         }
 
@@ -337,6 +338,59 @@ public:
 
             m_ibl_multiview = props.bool_("ibl_multiview", false);
             if (m_ibl_multiview) {
+#ifdef PREFILTERED_NEQV
+                m_compe_diff = props.bool_("compe_diff", false);
+                if (m_compe_diff) {
+                    std::array<std::string, 3> channels = { "r", "g", "b" };
+                    std::string cos_light_root = props.string("cos_light_root");
+                    for (int j = 0; j < 4; ++j) {
+                        for (int i = 0; i < 11; ++i) {
+                            int tagi        = i / 10.0 * 10;
+                            std::string tag = std::to_string(tagi);
+                            // load cos light lut
+                            if (tag.size() < 2) tag = std::to_string(j) + "_cos_light_0" + tag;
+                            std::string cos_light_path = cos_light_root + (i == 10 ? std::to_string(j) + "_cos_light_10.exr" : tag + ".exr");
+                            fs::path file_path = fs->resolve(cos_light_path);
+                            ref<Bitmap> bitmap = new Bitmap(file_path);
+                            bitmap = bitmap->convert(Bitmap::PixelFormat::Y, struct_type_v<ScalarFloat>, false);
+                            m_coslightlut.multiview_coslight_reso_list[j * 11 + i] = bitmap->size();
+                            m_coslightlut.multiview_coslight_list[j * 11 + i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_coslightlut.multiview_coslight_reso_list[j * 11 + i]));
+
+                            // load light max
+                            tag = std::to_string(tagi);
+                            if (tag.size() < 2) tag = std::to_string(j) + "_light_max_0" + tag;
+                            std::string light_max_path = cos_light_root + (i == 10 ? std::to_string(j) + "_light_max_10.txt" : tag + ".txt");
+                            std::ifstream fin;
+                            try {
+                                fin.open(light_max_path);
+                                if (fin.is_open()) {
+                                    std::string str;
+                                    std::getline(fin, str);
+                                    m_coslightlut.multiview_lightmax_list[j * 11 + i] = std::stof(str);
+                                } else {
+                                    std::cout << "light max file [" << light_max_path << "] is not exist.\n";
+                                    exit(0);
+                                }
+                            } catch (std::exception &e) {
+                                std::cout << "read light max file error\n";
+                                exit(0);
+                            }
+                        }
+                    }
+                }
+                for (int i = 0; i < 41; ++i) {
+                    int tagi = i / 40.0 * 1000;
+                    std::string tag = std::to_string(tagi);
+                    if (tag.size() < 2) tag = "00" + tag;
+                    else if (tag.size() < 3) tag = "0" + tag;
+                    std::string name = (i == 40 ? "env1000.exr" : ("env0" + tag + ".exr"));
+                    fs::path file_path = fs->resolve(pre_envmap_root + name);
+                    ref<Bitmap> bitmap = new Bitmap(file_path);
+                    bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
+                    m_prefiltered_envmap.resolution_list[i] = bitmap->size();
+                    m_prefiltered_envmap.data_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.resolution_list[i]) * 3);
+                }
+#else
                 for (int j = 0; j < 4; ++j) {
                     for (int i = 0; i < 41; ++i) {
                         int tagi = i / 40.0 * 1000;
@@ -352,6 +406,7 @@ public:
                         m_prefiltered_envmap.multiview_data_list[j * 41 + i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_prefiltered_envmap.multiview_reso_list[j * 41 + i]) * 3);
                     }
                 }
+#endif
             } else {
                 //for (int i = 0; i < 11; ++i) {
                 //    int tagi = i / 10.0 * 10;
@@ -360,6 +415,86 @@ public:
                 //    fs::path file_path = fs->resolve(pre_envmap_root + name); 
                 //    ref<Bitmap> bitmap = new Bitmap(file_path);
 
+#ifdef PREFILTERED_NEQV
+                m_compe_diff = props.bool_("compe_diff", false);
+                if (m_compe_diff) {
+                    std::string cos_light_root = props.string("cos_light_root");
+                    std::array<std::string, 3> channels = { "r", "g", "b" };
+                    for (int i = 0; i < 11; ++i) {
+                        int tagi = i / 10.0 * 10;
+                        std::string tag = std::to_string(tagi);
+                        // load cos light lut
+                        if (tag.size() < 2) tag = "cos_light_0" + tag; 
+                        std::string cos_light_path = cos_light_root + (i == 10 ? "cos_light_10.exr" : tag + ".exr");
+                        fs::path file_path = fs->resolve(cos_light_path);
+                        ref<Bitmap> bitmap = new Bitmap(file_path);
+                        bitmap = bitmap->convert(Bitmap::PixelFormat::Y, struct_type_v<ScalarFloat>, false);
+                        m_coslightlut.cos_light_reso_list[i] = bitmap->size(); 
+                        m_coslightlut.cos_light_list[i] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_coslightlut.cos_light_reso_list[i]));
+                    
+                        // load light max
+                        tag = std::to_string(tagi);
+                        if (tag.size() < 2) tag = "light_max_0" + tag; 
+                        std::string light_max_path = cos_light_root + (i == 10 ? "light_max_10.txt" : tag + ".txt");
+                        std::ifstream fin;
+                        try {
+                            fin.open(light_max_path);
+                            if (fin.is_open()) {
+                                std::string str;
+                                std::getline(fin, str);
+                                m_coslightlut.light_max_list[i] =
+                                std::stof(str);
+                            }
+                            else {
+                                std::cout << "light max file [" << light_max_path << "] is not exist.\n";
+                                exit(0);
+                            }
+                        } catch (std::exception& e) {
+                            std::cout << "read light max file error\n";
+                            exit(0);
+                        }
+
+                        // split rgb channel
+                        //for (int j = 0; j < 3; ++j) {
+                        //    std::string tag = std::to_string(tagi);
+                        //    std::string ch = channels[j];
+                        //    // load cos light lut
+                        //    if (tag.size() < 2) tag = "cos_light_" + ch +"_0" + tag;
+                        //    std::string cos_light_path = cos_light_root + (i == 10 ? "cos_light_" + ch + "_10.exr" : tag + ".exr");
+                        //    fs::path file_path = fs->resolve(cos_light_path);
+                        //    ref<Bitmap> bitmap = new Bitmap(file_path);
+                        //    bitmap = bitmap->convert(Bitmap::PixelFormat::Y, struct_type_v<ScalarFloat>, false);
+                        //    m_coslightlut.cos_light_reso_list[i * 3 + j] = bitmap->size();
+                        //    m_coslightlut.cos_light_list[i * 3 + j] = DynamicBuffer<Float>::copy(bitmap->data(), hprod(m_coslightlut.cos_light_reso_list[i * 3 + j]));
+                        //    
+                        //    //bitmap->write(fs::path("E:/resources/kunzhou_1027_01/0001/brdf_temp2/head/head0/test.exr"));
+                        //    //exit(0);
+                        //    
+                        //    // load light max
+                        //    tag = std::to_string(tagi);
+                        //    if (tag.size() < 2) tag = "light_max_" + ch + "_0" + tag;
+                        //    std::string light_max_path = cos_light_root + (i == 10 ? "light_max_" + ch + "_10.txt" : tag + ".txt");
+                        //    std::ifstream fin;
+                        //    try {
+                        //        fin.open(light_max_path);
+                        //        if (fin.is_open()) {
+                        //            std::string str;
+                        //            std::getline(fin, str);
+                        //            m_coslightlut.light_max_list[i * 3 + j] = std::stof(str);
+                        //        }
+                        //        else {
+                        //            std::cout << "light max file [" << light_max_path << "] is not exist.\n";
+                        //            exit(0);
+                        //        }
+                        //    } catch (std::exception& e) {
+                        //        std::cout << "read light max file error\n";
+                        //        exit(0);
+                        //    }
+                        //}
+
+                    }
+                }
+#endif
                 for (int i = 0; i < 41; ++i) {
                     int tagi = i / 40.0 * 1000;
                     std::string tag = std::to_string(tagi);
@@ -552,8 +687,14 @@ public:
         using Int4       = Array<Int32, 4>;
         using Int24      = Array<Int4, 2>;
         for(int i = bottom; i <= up; ++i) {
+#ifdef PREFILTERED_NEQV
+            auto &resolution = m_prefiltered_envmap.resolution_list[i];
+            auto &data       = m_prefiltered_envmap.data_list[i];
+#else
             auto &resolution = m_prefiltered_envmap.multiview_reso_list[view_index * 41 + i];
             auto &data       = m_prefiltered_envmap.multiview_data_list[view_index * 41 + i];
+#endif
+
             Point2f uv_t = fmadd(uv, resolution, -.5f);
 
             Vector2i uv_i = floor2int<Vector2i>(uv_t);
@@ -578,6 +719,9 @@ public:
                      v = fmadd(w0.y(), v0, w1.y() * v1);
             result += v;
         }
+#ifdef PREFILTERED_NEQV
+        result *= m_prefiltered_envmap.scale;
+#endif
         return result;
     }
     Vector3f eval_brdflut(Float cos_theta, Float roughness, Mask active) const {
@@ -608,7 +752,98 @@ public:
         return fmadd(w0.y(), v0, w1.y() * v1);
         //return v00;
     }
+#ifdef PREFILTERED_NEQV
+    Float eval_coslightlut(Int32 lod, Float cos_theta, Float light_value, int32_t bottom, int32_t top, int ch_index, Mask active) const {
+        Float result(0.f);
+        using Int4 = Array<Int32, 4>;
+        using Int24 = Array<Int4, 2>;
+        
+        for (int i = bottom; i <= top; ++i) {
+            //auto &resolution = m_coslightlut.cos_light_reso_list[i * 3 + ch_index];
+            //auto &data       = m_coslightlut.cos_light_list[i * 3 + ch_index];
+            //float light_max  = m_coslightlut.light_max_list[i * 3 + ch_index];
+            
+            auto &resolution = m_coslightlut.cos_light_reso_list[i];
+            auto &data       = m_coslightlut.cos_light_list[i];
+            float light_max  = m_coslightlut.light_max_list[i];
 
+            Float light_value_v = light_value / light_max;
+            Point2f uv = Point2f(cos_theta, light_value_v);
+
+            Point2f uv_t = fmadd(uv, resolution, -.5f);
+
+            Vector2i uv_i = floor2int<Vector2i>(uv_t);
+
+            Point2f w1 = uv_t - Point2f(uv_i), w0 = 1.f - w1;
+
+            Int24 uv_i_w = wrap(
+                Int24(Int4(0, 1, 0, 1) + uv_i.x(), Int4(0, 0, 1, 1) + uv_i.y()),
+                resolution);
+
+            Int4 index = uv_i_w.x() + uv_i_w.y() * resolution.x();
+            Mask active_e = active;
+            active_e &= eq(lod, i);
+
+            Float v00 = gather<Float>(data, index.x(), active_e),
+                  v10 = gather<Float>(data, index.y(), active_e),
+                  v01 = gather<Float>(data, index.z(), active_e),
+                  v11 = gather<Float>(data, index.w(), active_e);
+
+            Float v0 = fmadd(w0.x(), v00, w1.x() * v10),
+                     v1 = fmadd(w0.x(), v01, w1.x() * v11),
+                     v = fmadd(w0.y(), v0, w1.y() * v1);
+            result += v;
+        }
+
+        return result;
+    }
+
+    Float eval_coslightlut_multiview(Int32 lod, Float cos_theta, Float light_value, 
+        int32_t bottom, int32_t top, int ch_index, Mask active, int view_index) const {
+        Float result(0.f);
+        using Int4 = Array<Int32, 4>;
+        using Int24 = Array<Int4, 2>;
+        
+        for (int i = bottom; i <= top; ++i) {
+            //auto &resolution = m_coslightlut.cos_light_reso_list[i * 3 + ch_index];
+            //auto &data       = m_coslightlut.cos_light_list[i * 3 + ch_index];
+            //float light_max  = m_coslightlut.light_max_list[i * 3 + ch_index];
+            
+            auto &resolution = m_coslightlut.multiview_coslight_reso_list[view_index * 11 + i];
+            auto &data       = m_coslightlut.multiview_coslight_list[view_index * 11 + i];
+            float light_max  = m_coslightlut.multiview_lightmax_list[view_index * 11 + i];
+
+            Float light_value_v = light_value / light_max;
+            Point2f uv = Point2f(cos_theta, light_value_v);
+
+            Point2f uv_t = fmadd(uv, resolution, -.5f);
+
+            Vector2i uv_i = floor2int<Vector2i>(uv_t);
+
+            Point2f w1 = uv_t - Point2f(uv_i), w0 = 1.f - w1;
+
+            Int24 uv_i_w = wrap(
+                Int24(Int4(0, 1, 0, 1) + uv_i.x(), Int4(0, 0, 1, 1) + uv_i.y()),
+                resolution);
+
+            Int4 index = uv_i_w.x() + uv_i_w.y() * resolution.x();
+            Mask active_e = active;
+            active_e &= eq(lod, i);
+
+            Float v00 = gather<Float>(data, index.x(), active_e),
+                  v10 = gather<Float>(data, index.y(), active_e),
+                  v01 = gather<Float>(data, index.z(), active_e),
+                  v11 = gather<Float>(data, index.w(), active_e);
+
+            Float v0 = fmadd(w0.x(), v00, w1.x() * v10),
+                     v1 = fmadd(w0.x(), v01, w1.x() * v11),
+                     v = fmadd(w0.y(), v0, w1.y() * v1);
+            result += v;
+        }
+
+        return result;
+    }
+#endif
     Spectrum eval(const BSDFContext &ctx, const SurfaceInteraction3f &si,
                   const Vector3f &wo, Mask active) const override {
         MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
@@ -694,6 +929,30 @@ public:
             UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
             Spectrum res = reflection * right;
 
+#ifdef PREFILTERED_NEQV
+            if (m_compe_diff)
+            {
+                Float alpha_t = alpha * Float(10);
+                Int32 lodf = Int32(floor(alpha_t));
+                Int32 lodc = Int32(ceil(alpha_t));
+                DynamicBuffer<Int32> bottom = hmin(lodf);
+                DynamicBuffer<Int32> top = hmax(lodc);
+                int32_t *bptr = bottom.managed().data();
+                int32_t *tptr = top.managed().data();
+                int32_t bottom_value = *bptr;
+                int32_t top_value = *tptr;
+
+                Spectrum diff(0.0);
+                for (int i = 0; i < 3; ++i) {
+                    Float light_value = reflection[i];
+                    Float diffa = eval_coslightlut(lodf, cos_theta_i, light_value, bottom_value, top_value, i, active);
+                    Float diffb = eval_coslightlut(lodc, cos_theta_i, light_value, bottom_value, top_value, i, active);
+                    Float diff_t = lerp(diffa, diffb, alpha_t - Float(lodf));
+                    diff[i] = diff_t;
+                }
+                res = res + diff;
+            }
+#endif
             return res & active;
             
         }
@@ -851,7 +1110,7 @@ public:
 
             Vector3f brdf = eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
 
-            UnpolarizedSpectrum f0(0.0f); 
+            UnpolarizedSpectrum f0(0.0f);
             if (likely(m_forward)) {
                 f0 = m_f0->eval(si, active);
             } else {
@@ -866,6 +1125,29 @@ public:
             UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
             Spectrum res = reflection * right;
 
+#ifdef PREFILTERED_NEQV
+            if (m_compe_diff) {
+                Float alpha_t               = alpha * Float(10);
+                Int32 lodf                  = Int32(floor(alpha_t));
+                Int32 lodc                  = Int32(ceil(alpha_t));
+                DynamicBuffer<Int32> bottom = hmin(lodf);
+                DynamicBuffer<Int32> top    = hmax(lodc);
+                int32_t *bptr               = bottom.managed().data();
+                int32_t *tptr               = top.managed().data();
+                int32_t bottom_value        = *bptr;
+                int32_t top_value           = *tptr;
+
+                Spectrum diff(0.0);
+                for (int i = 0; i < 3; ++i) {
+                    Float light_value = reflection[i];
+                    Float diffa = eval_coslightlut_multiview(lodf, cos_theta_i, light_value, bottom_value, top_value, i, active, view_index);
+                    Float diffb = eval_coslightlut_multiview(lodc, cos_theta_i, light_value, bottom_value, top_value, i, active, view_index);
+                    Float diff_t = lerp(diffa, diffb, alpha_t - Float(lodf));
+                    diff[i]      = diff_t;
+                }
+                res = res + diff;
+            }
+#endif
             return res & active;
             
         }
@@ -945,6 +1227,88 @@ public:
             result *= m_specular_reflectance->eval(si, active);
         return (F * result) & active;
     }
+
+    BSDFAttrib3f catch_bsdf_attrib(const BSDFContext &ctx, const SurfaceInteraction3f &si,
+                                 Mask active) const override {
+        BSDFAttrib3f bsdf_attrib;
+        // local
+        Float cos_theta_i = Frame3f::cos_theta(si.wi);
+        active &= cos_theta_i > 0.0f;
+
+        if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
+                     none_or<false>(active)))
+            return bsdf_attrib;
+
+        Vector3f r = si.to_world(reflect(si.wi));
+        r = m_prefiltered_envmap.world_transform->eval(si.time, active).transform_affine(r);
+
+        Point2f uv = Point2f(atan2(r.x(), -r.z()) * math::InvTwoPi<Float>,
+                             safe_acos(r.y()) * math::InvPi<Float>);
+
+        uv -= floor(uv);
+        Float alpha(0.0f);
+        if (likely(m_forward)) {
+            alpha = m_alpha_u->eval_1(si, active);
+        } else {
+            // sigmoid
+            Float in_alpha = m_alpha_u->eval_1(si, active);
+            alpha          = Float(1.f) + exp(-in_alpha);
+            alpha          = Float(1.f) / alpha;
+            ////
+        }
+        Float roughness = safe_sqrt(alpha);
+
+        // Float alpha = clamp(m_alpha_u->eval_1(si, active), Float(0.0),
+        // Float(1.0)); Float roughness   = sqrt(alpha); Float roughness_t =
+        // roughness * Float(10);
+
+        // Float roughness_t = roughness * Float(40);
+        Float roughness_t = alpha * Float(40);
+        Int32 lodf        = Int32(floor(roughness_t));
+        Int32 lodc        = Int32(ceil(roughness_t));
+
+        DynamicBuffer<Int32> bottom = hmin(lodf);
+        DynamicBuffer<Int32> top    = hmax(lodc);
+        int32_t *bptr               = bottom.managed().data();
+        int32_t *tptr               = top.managed().data();
+        int bottom_value            = *bptr;
+        int top_value               = *tptr;
+        UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active,
+                                            bottom_value, top_value);
+        UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths, active,
+                                            bottom_value, top_value);
+
+        // UnpolarizedSpectrum a = eval_envmap(lodf, uv, si.wavelengths, active,
+        // 0, 40); UnpolarizedSpectrum b = eval_envmap(lodc, uv, si.wavelengths,
+        // active, 0, 40);
+        UnpolarizedSpectrum reflection = lerp(a, b, roughness_t - Float(lodf));
+        
+        bsdf_attrib.cos_i = cos_theta_i;
+        bsdf_attrib.light_value = reflection;
+
+        return bsdf_attrib;
+
+        Vector3f brdf =
+            eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
+
+        UnpolarizedSpectrum f0(0.0f);
+        if (likely(m_forward)) {
+            f0 = m_f0->eval(si, active);
+        } else {
+            // sigmoid
+            UnpolarizedSpectrum in_f0 = m_f0->eval(si, active);
+            f0                        = UnpolarizedSpectrum(1.f) + exp(-in_f0);
+            f0                        = Float(1.f) / f0;
+            ////
+        }
+
+        UnpolarizedSpectrum f90   = m_f90->eval(si, active);
+        UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
+        Spectrum res              = reflection * right;
+
+        //return res & active;
+    }
+
     Float pdf(const BSDFContext &ctx, const SurfaceInteraction3f &si,
               const Vector3f &wo, Mask active) const override {
         MTS_MASKED_FUNCTION(ProfilerPhase::BSDFEvaluate, active);
@@ -1349,8 +1713,11 @@ public:
         }
         callback->put_object("eta", m_eta.get());
         callback->put_object("k", m_k.get());
-        callback->put_object("f0", m_f0.get());
-        callback->put_object("f90", m_f90.get());
+        
+        if (m_fresnel_shlick) {
+            callback->put_object("f0", m_f0.get());
+            callback->put_object("f90", m_f90.get());
+        }
         if (m_specular_reflectance)
             callback->put_object("specular_reflectance", m_specular_reflectance.get());
     }
@@ -1418,6 +1785,19 @@ private:
 
     // forward rendering
     bool m_forward = false;
+
+#ifdef PREFILTERED_NEQV
+    bool m_compe_diff = false;
+    struct {
+        Vector<DynamicBuffer<Float>, 44> multiview_coslight_list;
+        Vector<ScalarVector2u, 44> multiview_coslight_reso_list;
+        std::array<float, 44> multiview_lightmax_list;
+
+        Vector<DynamicBuffer<Float>, 11> cos_light_list;
+        Vector<ScalarVector2u, 11> cos_light_reso_list;
+        std::array<float, 11> light_max_list;
+    }m_coslightlut;
+#endif
 };
 
 MTS_IMPLEMENT_CLASS_VARIANT(RoughConductor, BSDF)

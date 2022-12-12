@@ -189,6 +189,12 @@ struct MTS_EXPORT_RENDER BSDFContext {
     }
 };
 
+template <typename Float, typename Spectrum> struct BSDFAttrib3 {
+    Float cos_i;
+    Spectrum light_value;
+    ENOKI_STRUCT(BSDFAttrib3, cos_i, light_value);
+};
+
 /// Data structure holding the result of BSDF sampling operations.
 template <typename Float, typename Spectrum> struct BSDFSample3 {
     // =============================================================
@@ -442,6 +448,13 @@ public:
                           const int view_index,
                           Mask active = true) const;
 
+    virtual BSDFAttrib3f catch_bsdf_attrib(const BSDFContext &ctx,
+                                         const SurfaceInteraction3f &si,
+                                         Mask active = true) const {
+        BSDFAttrib3f bsdf_attrib;
+        return bsdf_attrib;
+    }
+
     // -----------------------------------------------------------------------
     //! @{ \name BSDF property accessors (components, flags, etc)
     // -----------------------------------------------------------------------
@@ -516,6 +529,15 @@ std::ostream &operator<<(std::ostream &os, const BSDFSample3<Float, Spectrum>& b
 }
 
 template <typename Float, typename Spectrum>
+std::ostream &operator<<(std::ostream &os, const BSDFAttrib3<Float, Spectrum>& ba) {
+    os << "BSDFAttrib3[" << std::endl
+        << "  cos_i = " << ba.cos_i << "," << std::endl
+        << "  light_value = " << ba.light_value << "," << std::endl
+        << "]";
+    return os;
+}
+
+template <typename Float, typename Spectrum>
 typename SurfaceInteraction<Float, Spectrum>::BSDFPtr SurfaceInteraction<Float, Spectrum>::bsdf(
     const typename SurfaceInteraction<Float, Spectrum>::RayDifferential3f &ray) {
     const BSDFPtr bsdf = shape->bsdf();
@@ -545,6 +567,9 @@ NAMESPACE_END(mitsuba)
 ENOKI_STRUCT_SUPPORT(mitsuba::BSDFSample3, wo, pdf, eta,
                      sampled_type, sampled_component)
 
+ENOKI_STRUCT_SUPPORT(mitsuba::BSDFAttrib3, cos_i, light_value)
+
+
 //! @}
 // -----------------------------------------------------------------------
 
@@ -564,6 +589,7 @@ ENOKI_CALL_SUPPORT_TEMPLATE_BEGIN(mitsuba::BSDF)
     ENOKI_CALL_SUPPORT_METHOD(pdf_window)
     ENOKI_CALL_SUPPORT_METHOD(sample_window)
     ENOKI_CALL_SUPPORT_METHOD(eval_multiview)
+    ENOKI_CALL_SUPPORT_METHOD(catch_bsdf_attrib)
     ENOKI_CALL_SUPPORT_GETTER(flags, m_flags)
 
     auto needs_differentials() const {
