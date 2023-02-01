@@ -23,7 +23,7 @@ endif()
 # ---------- Detect Python ----------
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/ext/pybind11/tools")
-set(Python_ADDITIONAL_VERSIONS 3.9 3.8 3.7 3.6 3.5)
+set(Python_ADDITIONAL_VERSIONS 3.7 3.6 3.5)
 find_package(PythonLibsNew REQUIRED)
 
 

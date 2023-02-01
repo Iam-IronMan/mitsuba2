@@ -61,8 +61,8 @@ public:
     }
 
     void parameters_changed(const std::vector<std::string> &/*keys*/) override {
-        if constexpr (!is_spectral_v<Spectrum>)
-            m_value = clamp(m_value, 0.f, 1.f);
+        //if constexpr (!is_spectral_v<Spectrum>)
+        //    m_value = clamp(m_value, 0.f, 1.f);
     }
 
     std::string to_string() const override {

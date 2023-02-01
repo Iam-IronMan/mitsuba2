@@ -16,7 +16,7 @@
 #include <sstream>
 #include <exception> 
 
-//#define PREFILTERED_NEQV
+#define PREFILTERED_NEQV
 
 NAMESPACE_BEGIN(mitsuba)
 
@@ -339,10 +339,17 @@ public:
             m_ibl_multiview = props.bool_("ibl_multiview", false);
             if (m_ibl_multiview) {
 #ifdef PREFILTERED_NEQV
+
+                
+                m_f90_0 = props.texture<Texture>("f90_0", 1.0f);
+                m_f90_1 = props.texture<Texture>("f90_1", 1.0f);
+                m_f90_2 = props.texture<Texture>("f90_2", 1.0f);
+                m_f90_3 = props.texture<Texture>("f90_3", 1.0f);
                 m_compe_diff = props.bool_("compe_diff", false);
                 if (m_compe_diff) {
                     std::array<std::string, 3> channels = { "r", "g", "b" };
                     std::string cos_light_root = props.string("cos_light_root");
+                    m_compe_scale          = props.float_("compe_scale", 1.0);
                     for (int j = 0; j < 4; ++j) {
                         for (int i = 0; i < 11; ++i) {
                             int tagi        = i / 10.0 * 10;
@@ -420,6 +427,7 @@ public:
                 if (m_compe_diff) {
                     std::string cos_light_root = props.string("cos_light_root");
                     std::array<std::string, 3> channels = { "r", "g", "b" };
+                    m_compe_scale = props.float_("compe_scale", 1.0);
                     for (int i = 0; i < 11; ++i) {
                         int tagi = i / 10.0 * 10;
                         std::string tag = std::to_string(tagi);
@@ -515,6 +523,7 @@ public:
                 }
             }
             m_prefiltered_envmap.scale = props.float_("envmap_scale", 1.f);
+            m_prefiltered_envmap.ratio = props.texture<Texture>("envmap_ratio", 1.f);
             if (props.has_property("envmap_to_world")) {
                 m_prefiltered_envmap.world_transform = props.animated_transform("envmap_to_world", ScalarTransform4f()).get();
             }
@@ -674,7 +683,10 @@ public:
         }
 
 #ifdef PREFILTERED_NEQV
-        result *= m_prefiltered_envmap.scale;
+        //result *= m_prefiltered_envmap.scale;
+        SurfaceInteraction3f si;
+        si.uv = uv;
+        result *= m_prefiltered_envmap.scale * m_prefiltered_envmap.ratio->eval_1(si, active);
 #endif
         return result;
     }
@@ -720,7 +732,10 @@ public:
             result += v;
         }
 #ifdef PREFILTERED_NEQV
-        result *= m_prefiltered_envmap.scale;
+        //result *= m_prefiltered_envmap.scale;
+        SurfaceInteraction3f si;
+        si.uv = uv;
+        result *= m_prefiltered_envmap.scale * m_prefiltered_envmap.ratio->eval_1(si, active);
 #endif
         return result;
     }
@@ -930,7 +945,7 @@ public:
             Spectrum res = reflection * right;
 
 #ifdef PREFILTERED_NEQV
-            if (m_compe_diff)
+            if (m_compe_diff && m_compe_scale > 0)
             {
                 Float alpha_t = alpha * Float(10);
                 Int32 lodf = Int32(floor(alpha_t));
@@ -943,14 +958,16 @@ public:
                 int32_t top_value = *tptr;
 
                 Spectrum diff(0.0);
+                Float ratio = m_prefiltered_envmap.ratio->eval_1(si, active);
+                Float compe_ratio = m_compe_scale * ratio;
                 for (int i = 0; i < 3; ++i) {
-                    Float light_value = reflection[i];
+                    Float light_value = reflection[i] / compe_ratio;
                     Float diffa = eval_coslightlut(lodf, cos_theta_i, light_value, bottom_value, top_value, i, active);
                     Float diffb = eval_coslightlut(lodc, cos_theta_i, light_value, bottom_value, top_value, i, active);
                     Float diff_t = lerp(diffa, diffb, alpha_t - Float(lodf));
                     diff[i] = diff_t;
                 }
-                res = res + diff;
+                res = res + diff * compe_ratio;
             }
 #endif
             return res & active;
@@ -1120,13 +1137,30 @@ public:
                 f0                     = Float(1.f) / f0;
                 ////
             }
-
+#ifdef PREFILTERED_NEQV
+            UnpolarizedSpectrum f90;
+            switch (view_index) { 
+                case 0:
+                    f90 = m_f90_0->eval(si, active);
+                    break;
+                case 1:
+                    f90 = m_f90_1->eval(si, active);
+                    break;
+                case 2:
+                    f90 = m_f90_2->eval(si, active);
+                    break;
+                case 3:
+                    f90 = m_f90_3->eval(si, active);
+                    break;
+            }
+#else
             UnpolarizedSpectrum f90   = m_f90->eval(si, active);
+#endif
             UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
-            Spectrum res = reflection * right;
+            Spectrum res              = reflection * right;
 
 #ifdef PREFILTERED_NEQV
-            if (m_compe_diff) {
+            if (m_compe_diff && m_compe_scale > 0) {
                 Float alpha_t               = alpha * Float(10);
                 Int32 lodf                  = Int32(floor(alpha_t));
                 Int32 lodc                  = Int32(ceil(alpha_t));
@@ -1138,14 +1172,16 @@ public:
                 int32_t top_value           = *tptr;
 
                 Spectrum diff(0.0);
+                Float ratio = m_prefiltered_envmap.ratio->eval_1(si, active);
+                Float compe_ratio = m_compe_scale * ratio;
                 for (int i = 0; i < 3; ++i) {
-                    Float light_value = reflection[i];
+                    Float light_value = reflection[i] / compe_ratio;
                     Float diffa = eval_coslightlut_multiview(lodf, cos_theta_i, light_value, bottom_value, top_value, i, active, view_index);
                     Float diffb = eval_coslightlut_multiview(lodc, cos_theta_i, light_value, bottom_value, top_value, i, active, view_index);
                     Float diff_t = lerp(diffa, diffb, alpha_t - Float(lodf));
                     diff[i]      = diff_t;
                 }
-                res = res + diff;
+                res = res + diff * compe_ratio;
             }
 #endif
             return res & active;
@@ -1718,6 +1754,15 @@ public:
             callback->put_object("f0", m_f0.get());
             callback->put_object("f90", m_f90.get());
         }
+#ifdef PREFILTERED_NEQV
+        callback->put_object("envmap_ratio", m_prefiltered_envmap.ratio.get());
+        if (m_ibl_multiview) {
+            callback->put_object("f90_0", m_f90_0.get());
+            callback->put_object("f90_1", m_f90_1.get());
+            callback->put_object("f90_2", m_f90_2.get());
+            callback->put_object("f90_3", m_f90_3.get());
+        }
+#endif
         if (m_specular_reflectance)
             callback->put_object("specular_reflectance", m_specular_reflectance.get());
     }
@@ -1774,6 +1819,7 @@ private:
         Vector<ScalarVector2u, 41> resolution_list;
         ref<const AnimatedTransform> world_transform;
         float scale;
+        ref<Texture> ratio;
     } m_prefiltered_envmap;
 
     // catch irradiance
@@ -1788,6 +1834,7 @@ private:
 
 #ifdef PREFILTERED_NEQV
     bool m_compe_diff = false;
+    float m_compe_scale = 1.0;
     struct {
         Vector<DynamicBuffer<Float>, 44> multiview_coslight_list;
         Vector<ScalarVector2u, 44> multiview_coslight_reso_list;
@@ -1797,6 +1844,11 @@ private:
         Vector<ScalarVector2u, 11> cos_light_reso_list;
         std::array<float, 11> light_max_list;
     }m_coslightlut;
+
+    ref<Texture> m_f90_0;
+    ref<Texture> m_f90_1;
+    ref<Texture> m_f90_2;
+    ref<Texture> m_f90_3;
 #endif
 };
 
