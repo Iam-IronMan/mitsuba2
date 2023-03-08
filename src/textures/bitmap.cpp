@@ -196,11 +196,12 @@ public:
             Throw("Unsupported channel count: %d (expected 1 or 3)",
                   m_bitmap->channel_count());
         }
-
+#ifdef _DEBUG
         if (bad)
             Log(Warn,
                 "BitmapTexture: texture named \"%s\" contains pixels that "
                 "exceed the [0, 1] range!", m_name);
+#endif
 
         m_mean = ScalarFloat(mean / pixel_count);
     }
@@ -645,11 +646,12 @@ protected:
 
         if (init_mean)
             m_mean = ScalarFloat(mean / pixel_count);
-
+#ifdef _DEBUG
         if (bad)
             Log(Warn,
                 "BitmapTexture: texture named \"%s\" contains pixels that "
                 "exceed the [0, 1] range!", m_name);
+#endif
     }
 
 protected:

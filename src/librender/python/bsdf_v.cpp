@@ -24,6 +24,12 @@ MTS_PY_EXPORT(BSDFSample) {
         .def(py::init<const BSDFAttrib3f &>(), "ba"_a)
         .def_readwrite("cos_i", &BSDFAttrib3f::cos_i)
         .def_readwrite("light_value", &BSDFAttrib3f::light_value)
+        .def_readwrite("env_uv", &BSDFAttrib3f::env_uv)
+        .def_readwrite("wi", &BSDFAttrib3f::wi)
+        .def_readwrite("wo", &BSDFAttrib3f::wo)
+        .def_readwrite("env_light_value", &BSDFAttrib3f::env_light_value)
+        .def_readwrite("f0", &BSDFAttrib3f::f0)
+        .def_readwrite("alpha", &BSDFAttrib3f::alpha)
         .def_repr(BSDFAttrib3f);
 }
 

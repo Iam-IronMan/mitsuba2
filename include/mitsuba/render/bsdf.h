@@ -190,9 +190,19 @@ struct MTS_EXPORT_RENDER BSDFContext {
 };
 
 template <typename Float, typename Spectrum> struct BSDFAttrib3 {
+    using Vector3f = Vector<Float, 3>;
+    using Vector2f = Vector<Float, 2>;
+
     Float cos_i;
     Spectrum light_value;
-    ENOKI_STRUCT(BSDFAttrib3, cos_i, light_value);
+    Vector2f env_uv;
+    Vector3f wi;
+    Vector3f wo;
+    Spectrum env_light_value;
+    Spectrum f0;
+    Float alpha;
+
+    ENOKI_STRUCT(BSDFAttrib3, cos_i, light_value, env_uv, wi, wo, env_light_value, f0, alpha);
 };
 
 /// Data structure holding the result of BSDF sampling operations.
@@ -567,7 +577,7 @@ NAMESPACE_END(mitsuba)
 ENOKI_STRUCT_SUPPORT(mitsuba::BSDFSample3, wo, pdf, eta,
                      sampled_type, sampled_component)
 
-ENOKI_STRUCT_SUPPORT(mitsuba::BSDFAttrib3, cos_i, light_value)
+ENOKI_STRUCT_SUPPORT(mitsuba::BSDFAttrib3, cos_i, light_value, env_uv, wi, wo, env_light_value, f0, alpha)
 
 
 //! @}

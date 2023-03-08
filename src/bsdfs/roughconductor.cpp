@@ -150,6 +150,11 @@ implementation of the underlying Fresnel equations.
 
  */
 
+class NNLinear {
+public:
+
+};
+
 template <typename Float, typename Spectrum>
 class RoughConductor final : public BSDF<Float, Spectrum> {
 public:
@@ -390,7 +395,7 @@ public:
                     std::string tag = std::to_string(tagi);
                     if (tag.size() < 2) tag = "00" + tag;
                     else if (tag.size() < 3) tag = "0" + tag;
-                    std::string name = (i == 40 ? "env1000.exr" : ("env0" + tag + ".exr"));
+                    std::string name = (i == 40 ? "env1000.hdr" : ("env0" + tag + ".hdr"));
                     fs::path file_path = fs->resolve(pre_envmap_root + name);
                     ref<Bitmap> bitmap = new Bitmap(file_path);
                     bitmap = bitmap->convert(Bitmap::PixelFormat::RGB, struct_type_v<ScalarFloat>, false);
@@ -508,7 +513,7 @@ public:
                     std::string tag = std::to_string(tagi);
                     if (tag.size() < 2) tag = "00" + tag;
                     else if (tag.size() < 3) tag = "0" + tag;
-                    std::string name = (i == 40 ? "env1000.exr" : ("env0" + tag + ".exr"));
+                    std::string name = (i == 40 ? "env1000.hdr" : ("env0" + tag + ".hdr"));
                     fs::path file_path = fs->resolve(pre_envmap_root + name);
                     ref<Bitmap> bitmap = new Bitmap(file_path);
 #ifdef PREFILTERED_NEQV
@@ -566,9 +571,19 @@ public:
         /* Construct a microfacet distribution matching the
            roughness values at the current surface position. */
         MicrofacetDistribution distr(m_type,
-                                     m_alpha_u->eval_1(si, active),
-                                     m_alpha_v->eval_1(si, active),
-                                     m_sample_visible);
+                                         m_alpha_u->eval_1(si, active),
+                                         m_alpha_v->eval_1(si, active),
+                                         m_sample_visible);
+        if (!m_forward) {
+            Float alpha_u = m_alpha_u->eval_1(si, active);
+            Float alpha_v = m_alpha_v->eval_1(si, active);
+            alpha_u       = Float(1.f) + exp(-alpha_u);
+            alpha_u       = Float(1.f) / alpha_u;
+            alpha_v       = Float(1.f) + exp(-alpha_v);
+            alpha_v       = Float(1.f) / alpha_v;
+            distr         = MicrofacetDistribution(m_type, alpha_u, alpha_v,
+                                         m_sample_visible);
+        }
 
         // Sample M, the microfacet normal
         Normal3f m;
@@ -627,9 +642,16 @@ public:
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
             if (likely(m_fresnel_shlick)) {
-                UnpolarizedSpectrum f0 = m_f0->eval(si, active);
                 UnpolarizedSpectrum f90 = m_f90->eval(si, active);
-                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0, f90);
+                if (likely(m_forward)) {
+                    UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0, f90);
+                } else {
+                    UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                    f0 = Float(1.f) + exp(-f0);
+                    f0 = Float(1.f) / f0;
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0, f90);
+                }
                 //F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0);
             } else {
                 F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, m)), eta_c);
@@ -987,10 +1009,20 @@ public:
 
         /* Construct a microfacet distribution matching the
            roughness values at the current surface position. */
-        MicrofacetDistribution distr(m_type,
-                                     m_alpha_u->eval_1(si, active),
+        MicrofacetDistribution distr(m_type, m_alpha_u->eval_1(si, active),
                                      m_alpha_v->eval_1(si, active),
                                      m_sample_visible);
+        if (!m_forward) {
+            Float alpha_u = m_alpha_u->eval_1(si, active);
+            Float alpha_v = m_alpha_v->eval_1(si, active);
+            alpha_u       = Float(1.f) + exp(-alpha_u);
+            alpha_u       = Float(1.f) / alpha_u;
+            alpha_v       = Float(1.f) + exp(-alpha_v);
+            alpha_v       = Float(1.f) / alpha_v;
+            distr         = MicrofacetDistribution (m_type, alpha_u, alpha_v,
+                                         m_sample_visible);
+        
+        }
 
         // Evaluate the microfacet normal distribution
         Float D = distr.eval(H);
@@ -1037,9 +1069,16 @@ public:
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
             if (likely(m_fresnel_shlick)) {
-                UnpolarizedSpectrum f0 = m_f0->eval(si, active);
                 UnpolarizedSpectrum f90 = m_f90->eval(si, active);
-                F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0, f90);
+                if (likely(m_forward)) {
+                    UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0, f90);
+                } else {
+                    UnpolarizedSpectrum f0 = m_f0->eval(si, active);
+                    f0 = Float(1.f) + exp(-f0);
+                    f0 = Float(1.f) / f0;
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0, f90);
+                }
                 //F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
             } else {
                 F = fresnel_conductor(UnpolarizedSpectrum(dot(si.wi, H)), eta_c);
@@ -1270,11 +1309,9 @@ public:
         // local
         Float cos_theta_i = Frame3f::cos_theta(si.wi);
         active &= cos_theta_i > 0.0f;
-
         if (unlikely(!ctx.is_enabled(BSDFFlags::GlossyReflection) ||
                      none_or<false>(active)))
             return bsdf_attrib;
-
         Vector3f r = si.to_world(reflect(si.wi));
         r = m_prefiltered_envmap.world_transform->eval(si.time, active).transform_affine(r);
 
@@ -1319,28 +1356,45 @@ public:
         // active, 0, 40);
         UnpolarizedSpectrum reflection = lerp(a, b, roughness_t - Float(lodf));
         
-        bsdf_attrib.cos_i = cos_theta_i;
-        bsdf_attrib.light_value = reflection;
-
-        return bsdf_attrib;
-
-        Vector3f brdf =
-            eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
-
         UnpolarizedSpectrum f0(0.0f);
         if (likely(m_forward)) {
             f0 = m_f0->eval(si, active);
         } else {
             // sigmoid
             UnpolarizedSpectrum in_f0 = m_f0->eval(si, active);
-            f0                        = UnpolarizedSpectrum(1.f) + exp(-in_f0);
-            f0                        = Float(1.f) / f0;
+            f0                        = UnpolarizedSpectrum(1.f) + exp(-in_f0); 
+            f0 = Float(1.f) / f0;
             ////
         }
 
-        UnpolarizedSpectrum f90   = m_f90->eval(si, active);
-        UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
-        Spectrum res              = reflection * right;
+        UnpolarizedSpectrum env_light_value = eval_envmap(0, uv, si.wavelengths, active, 0, 0);
+        bsdf_attrib.cos_i = cos_theta_i;
+        bsdf_attrib.light_value = reflection;
+        bsdf_attrib.env_uv = uv;
+        bsdf_attrib.wi = si.wi;
+        bsdf_attrib.wo = si.wi;
+        bsdf_attrib.env_light_value = env_light_value;
+        bsdf_attrib.f0 = f0;
+        bsdf_attrib.alpha = alpha;
+        return bsdf_attrib;
+
+        //Vector3f brdf =
+        //    eval_brdflut(cos_theta_i, Float(1.0f) - roughness, active);
+
+        //UnpolarizedSpectrum f0(0.0f);
+        //if (likely(m_forward)) {
+        //    f0 = m_f0->eval(si, active);
+        //} else {
+        //    // sigmoid
+        //    UnpolarizedSpectrum in_f0 = m_f0->eval(si, active);
+        //    f0                        = UnpolarizedSpectrum(1.f) + exp(-in_f0);
+        //    f0                        = Float(1.f) / f0;
+        //    ////
+        //}
+
+        //UnpolarizedSpectrum f90   = m_f90->eval(si, active);
+        //UnpolarizedSpectrum right = f0 * brdf.x() + f90 * brdf.y();
+        //Spectrum res              = reflection * right;
 
         //return res & active;
     }
@@ -1367,10 +1421,19 @@ public:
 
         /* Construct a microfacet distribution matching the
            roughness values at the current surface position. */
-        MicrofacetDistribution distr(m_type,
-                                     m_alpha_u->eval_1(si, active),
-                                     m_alpha_v->eval_1(si, active),
-                                     m_sample_visible);
+        MicrofacetDistribution distr = MicrofacetDistribution(m_type, m_alpha_u->eval_1(si, active),
+                                         m_alpha_v->eval_1(si, active),
+                                         m_sample_visible);;
+        if (!m_forward) {
+            Float alpha_u = m_alpha_u->eval_1(si, active);
+            Float alpha_v = m_alpha_v->eval_1(si, active);
+            alpha_u       = Float(1.f) + exp(-alpha_u);
+            alpha_u       = Float(1.f) / alpha_u;
+            alpha_v       = Float(1.f) + exp(-alpha_v);
+            alpha_v       = Float(1.f) / alpha_v;
+            distr         = MicrofacetDistribution (m_type, alpha_u, alpha_v,
+                                         m_sample_visible);
+        }
 
         Float result;
         if (likely(m_sample_visible))
@@ -1755,7 +1818,9 @@ public:
             callback->put_object("f90", m_f90.get());
         }
 #ifdef PREFILTERED_NEQV
-        callback->put_object("envmap_ratio", m_prefiltered_envmap.ratio.get());
+        if (m_ibl) {
+            callback->put_object("envmap_ratio", m_prefiltered_envmap.ratio.get());
+        }
         if (m_ibl_multiview) {
             callback->put_object("f90_0", m_f90_0.get());
             callback->put_object("f90_1", m_f90_1.get());
