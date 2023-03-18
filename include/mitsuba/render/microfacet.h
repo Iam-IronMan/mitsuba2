@@ -257,11 +257,15 @@ public:
             // Sample elevation component
             if (m_type == MicrofacetType::Beckmann) {
                 // Beckmann distribution function for Gaussian random surfaces
-                cos_theta = rsqrt(fnmadd(alpha_2, log(1.f - sample.x()), 1.f));
+                // cos_theta = rsqrt(fnmadd(alpha_2, log(1.f - sample.x()), 1.f));
+                //
+                //cos_theta =  rsqrt(fnmadd(alpha_2, log(1.f - sample.x()), 1.f) + 1e-5f);
+                cos_theta = safe_rsqrt(fnmadd(alpha_2, log(1.f - sample.x()), 1.f));
                 cos_theta_2 = sqr(cos_theta);
 
                 // Compute probability density of the sampled position
-                Float cos_theta_3 = max(cos_theta_2 * cos_theta, 1e-20f);
+                // Float cos_theta_3 = max(cos_theta_2 * cos_theta, 1e-20f);
+                Float cos_theta_3 = max(cos_theta_2 * cos_theta, 1e-5f);
                 pdf = (1.f - sample.x()) / (Pi * m_alpha_u * m_alpha_v * cos_theta_3);
             } else {
                 // GGX / Trowbridge-Reitz distribution function
@@ -275,7 +279,9 @@ public:
                 pdf = rcp(Pi * m_alpha_u * m_alpha_v * cos_theta_3 * sqr(temp));
             }
 
-            Float sin_theta = sqrt(1.f - cos_theta_2);
+            //Float sin_theta = sqrt(1.f - cos_theta_2);
+             Float sin_theta = sqrt(max(1.f - cos_theta_2, 1e-5f));
+            //Float sin_theta = sqrt(1.f - cos_theta_2 + 1e-5f);
 
             return {
                 Normal3f(cos_phi * sin_theta,
@@ -330,11 +336,14 @@ public:
      */
     Float smith_g1(const Vector3f &v, const Vector3f &m) const {
         Float xy_alpha_2 = sqr(m_alpha_u * v.x()) + sqr(m_alpha_v * v.y()),
-              tan_theta_alpha_2 = xy_alpha_2 / sqr(v.z()),
+              //tan_theta_alpha_2 = xy_alpha_2 / sqr(v.z()),
+              tan_theta_alpha_2 = xy_alpha_2 / (sqr(v.z()) + 1e-5f),
               result;
 
+        tan_theta_alpha_2 = max(tan_theta_alpha_2, 1e-5f); 
         if (m_type == MicrofacetType::Beckmann) {
-            Float a = rsqrt(tan_theta_alpha_2), a_sqr = sqr(a);
+             Float a = rsqrt(tan_theta_alpha_2), a_sqr = sqr(a);
+            //Float a = rsqrt(tan_theta_alpha_2 + 1e-5f), a_sqr = sqr(a);
             /* Use a fast and accurate (<0.35% rel. error) rational
                approximation to the shadowing-masking function */
             result = select(a >= 1.6f, 1.f,

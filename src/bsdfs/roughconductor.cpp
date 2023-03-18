@@ -570,20 +570,19 @@ public:
 
         /* Construct a microfacet distribution matching the
            roughness values at the current surface position. */
-        MicrofacetDistribution distr(m_type,
-                                         m_alpha_u->eval_1(si, active),
-                                         m_alpha_v->eval_1(si, active),
-                                         m_sample_visible);
+        //MicrofacetDistribution distr(m_type,
+        //                                 m_alpha_u->eval_1(si, active),
+        //                                 m_alpha_v->eval_1(si, active),
+        //                                 m_sample_visible);
+        Float alpha_u = m_alpha_u->eval_1(si, active);
+        Float alpha_v = m_alpha_v->eval_1(si, active);
         if (!m_forward) {
-            Float alpha_u = m_alpha_u->eval_1(si, active);
-            Float alpha_v = m_alpha_v->eval_1(si, active);
             alpha_u       = Float(1.f) + exp(-alpha_u);
             alpha_u       = Float(1.f) / alpha_u;
             alpha_v       = Float(1.f) + exp(-alpha_v);
             alpha_v       = Float(1.f) / alpha_v;
-            distr         = MicrofacetDistribution(m_type, alpha_u, alpha_v,
-                                         m_sample_visible);
         }
+        MicrofacetDistribution distr(m_type, alpha_u, alpha_v, m_sample_visible);
 
         // Sample M, the microfacet normal
         Normal3f m;
@@ -642,15 +641,14 @@ public:
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
             if (likely(m_fresnel_shlick)) {
-                UnpolarizedSpectrum f90 = m_f90->eval(si, active);
                 if (likely(m_forward)) {
                     UnpolarizedSpectrum f0 = m_f0->eval(si, active);
-                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0, f90);
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0);
                 } else {
                     UnpolarizedSpectrum f0 = m_f0->eval(si, active);
                     f0 = Float(1.f) + exp(-f0);
                     f0 = Float(1.f) / f0;
-                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0, f90);
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0);
                 }
                 //F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, m)), f0);
             } else {
@@ -1009,20 +1007,19 @@ public:
 
         /* Construct a microfacet distribution matching the
            roughness values at the current surface position. */
-        MicrofacetDistribution distr(m_type, m_alpha_u->eval_1(si, active),
-                                     m_alpha_v->eval_1(si, active),
-                                     m_sample_visible);
+        //MicrofacetDistribution distr(m_type, m_alpha_u->eval_1(si, active),
+        //                             m_alpha_v->eval_1(si, active),
+        //                             m_sample_visible);
+        Float alpha_u = m_alpha_u->eval_1(si, active);
+        Float alpha_v = m_alpha_v->eval_1(si, active);
         if (!m_forward) {
-            Float alpha_u = m_alpha_u->eval_1(si, active);
-            Float alpha_v = m_alpha_v->eval_1(si, active);
             alpha_u       = Float(1.f) + exp(-alpha_u);
             alpha_u       = Float(1.f) / alpha_u;
             alpha_v       = Float(1.f) + exp(-alpha_v);
             alpha_v       = Float(1.f) / alpha_v;
-            distr         = MicrofacetDistribution (m_type, alpha_u, alpha_v,
-                                         m_sample_visible);
-        
         }
+        MicrofacetDistribution distr =
+            MicrofacetDistribution(m_type, alpha_u, alpha_v, m_sample_visible);
 
         // Evaluate the microfacet normal distribution
         Float D = distr.eval(H);
@@ -1069,15 +1066,14 @@ public:
                                                wo_hat, p_axis_out, mueller::stokes_basis(wo_hat));
         } else {
             if (likely(m_fresnel_shlick)) {
-                UnpolarizedSpectrum f90 = m_f90->eval(si, active);
                 if (likely(m_forward)) {
                     UnpolarizedSpectrum f0 = m_f0->eval(si, active);
-                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0, f90);
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
                 } else {
                     UnpolarizedSpectrum f0 = m_f0->eval(si, active);
                     f0 = Float(1.f) + exp(-f0);
                     f0 = Float(1.f) / f0;
-                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0, f90);
+                    F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
                 }
                 //F = fresnel_conductor_schlick(UnpolarizedSpectrum(dot(si.wi, H)), f0);
             } else {
@@ -1421,19 +1417,18 @@ public:
 
         /* Construct a microfacet distribution matching the
            roughness values at the current surface position. */
-        MicrofacetDistribution distr = MicrofacetDistribution(m_type, m_alpha_u->eval_1(si, active),
-                                         m_alpha_v->eval_1(si, active),
-                                         m_sample_visible);;
+        //MicrofacetDistribution distr = MicrofacetDistribution(m_type, m_alpha_u->eval_1(si, active),
+        //                                 m_alpha_v->eval_1(si, active),
+        //                                 m_sample_visible);
+        Float alpha_u = m_alpha_u->eval_1(si, active);
+        Float alpha_v = m_alpha_v->eval_1(si, active);
         if (!m_forward) {
-            Float alpha_u = m_alpha_u->eval_1(si, active);
-            Float alpha_v = m_alpha_v->eval_1(si, active);
             alpha_u       = Float(1.f) + exp(-alpha_u);
             alpha_u       = Float(1.f) / alpha_u;
             alpha_v       = Float(1.f) + exp(-alpha_v);
             alpha_v       = Float(1.f) / alpha_v;
-            distr         = MicrofacetDistribution (m_type, alpha_u, alpha_v,
-                                         m_sample_visible);
         }
+        MicrofacetDistribution distr(m_type, alpha_u, alpha_v, m_sample_visible);
 
         Float result;
         if (likely(m_sample_visible))
