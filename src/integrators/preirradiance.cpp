@@ -55,7 +55,8 @@ public:
             if (any_or<true>(neq(emitter, nullptr))) {
                 Spectrum emitter_val = emitter->eval(si, active);
                 result[active] += emission_weight * throughput * emitter_val;
-                if (depth == 2) {                
+                if (depth > 1) 
+                {                
                     irradiance[active_g] += emitter_val;
                     Mask active_t = active && !active_g;
                     irradiance[active_t] += emission_weight * throughput * emitter_val;
@@ -64,7 +65,7 @@ public:
 
             active &= si.is_valid();
 
-            if (depth == 2) {
+            if ((uint32_t) depth == (uint32_t) m_max_depth || none(active)) {
                 BSDFContext ctx;
                 Vector3f wo = 0;
                 need_catch_bsdf->catch_irradiance(ctx, need_catch_si, wo, irradiance, need_catch_mask);
@@ -112,13 +113,18 @@ public:
             
                 // Diffuse material need to be saved emitter sampling result
                 Mask active_d = active && has_flag(bsdf->flags(), BSDFFlags::DiffuseReflection);
+                active_d &= neq(ds.pdf, 0.f);
                 irradiance[active_d] += mis * throughput * bsdf_val * emitter_val;
                 ///
 
-                need_catch_mask = active_e;
-                need_catch_bsdf = bsdf;
-                need_catch_si   = si;
-                active_g = active && has_flag(bsdf->flags(), BSDFFlags::GlossyReflection);
+                if (depth == 1) {
+                    need_catch_mask = active_e;
+                    need_catch_bsdf = bsdf;
+                    need_catch_si   = si;
+                    active_g        = active && has_flag(bsdf->flags(),
+                                                  BSDFFlags::GlossyReflection);
+                }
+                
             }
 
             // ----------------------- BSDF sampling ----------------------
