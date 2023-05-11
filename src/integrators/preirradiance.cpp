@@ -6,6 +6,8 @@
 #include <mitsuba/render/integrator.h>
 #include <mitsuba/render/records.h>
 #include <random>
+#include <iostream>
+#include <stdexcept>
 
 NAMESPACE_BEGIN(mitsuba)
 
@@ -68,7 +70,13 @@ public:
             if ((uint32_t) depth == (uint32_t) m_max_depth || none(active)) {
                 BSDFContext ctx;
                 Vector3f wo = 0;
-                need_catch_bsdf->catch_irradiance(ctx, need_catch_si, wo, irradiance, need_catch_mask);
+                try {
+                    need_catch_bsdf->catch_irradiance(
+                        ctx, need_catch_si, wo, irradiance, need_catch_mask);
+                }
+                catch (std::runtime_error err) {
+                    std::cout << err.what() << std::endl;
+                }
                 break;
             }
 
