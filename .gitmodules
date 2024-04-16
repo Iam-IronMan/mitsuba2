@@ -1,39 +1,39 @@
 [submodule "ext/tbb"]
     path = ext/tbb
-    url = https://github.com.cnpmjs.org/wjakob/tbb
+    url = https://github.com/wjakob/tbb
 [submodule "ext/zlib"]
     path = ext/zlib
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/zlib
+    url = https://github.com/mitsuba-renderer/zlib
 [submodule "ext/libpng"]
     path = ext/libpng
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/libpng.git
+    url = https://github.com/mitsuba-renderer/libpng.git
 [submodule "ext/libjpeg"]
     path = ext/libjpeg
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/libjpeg
+    url = https://github.com/mitsuba-renderer/libjpeg
 [submodule "ext/openexr"]
     path = ext/openexr
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/openexr
+    url = https://github.com/mitsuba-renderer/openexr
 [submodule "ext/tinyformat"]
     path = ext/tinyformat
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/tinyformat
+    url = https://github.com/mitsuba-renderer/tinyformat
 [submodule "ext/pugixml"]
     path = ext/pugixml
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/pugixml
+    url = https://github.com/mitsuba-renderer/pugixml
 [submodule "ext/asmjit"]
     path = ext/asmjit
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/asmjit
+    url = https://github.com/mitsuba-renderer/asmjit
 [submodule "ext/pybind11"]
     path = ext/pybind11
-    url = https://github.com.cnpmjs.org/pybind/pybind11
+    url = https://github.com/pybind/pybind11
 [submodule "ext/enoki"]
     path = ext/enoki
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/enoki
+    url = https://github.com/mitsuba-renderer/enoki
 [submodule "ext/nanogui"]
     path = ext/nanogui
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/nanogui
+    url = https://github.com/mitsuba-renderer/nanogui
 [submodule "resources/data"]
     path = resources/data
-    url = https://github.com.cnpmjs.org/mitsuba-renderer/mitsuba-data
+    url = https://github.com/mitsuba-renderer/mitsuba-data
 [submodule "ext/embree"]
     path = ext/embree
-    url = https://github.com.cnpmjs.org/wjakob/embree
+    url = https://github.com/wjakob/embree
